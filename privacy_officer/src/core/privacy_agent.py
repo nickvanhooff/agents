@@ -4,6 +4,12 @@ import pandas as pd
 from tqdm import tqdm
 import logging
 import time
+from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer.nlp_engine import NlpEngineProvider
+from presidio_anonymizer import AnonymizerEngine
+from presidio_anonymizer.entities import OperatorConfig
+from langdetect import detect
+from langdetect.lang_detect_exception import LangDetectException
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -13,6 +19,44 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
 client = ollama.Client(host=OLLAMA_HOST)
 logging.info(f"Connecting to Ollama at: {OLLAMA_HOST}")
+
+# Initialize Presidio multi-language NLP engine
+logging.info("Initializing Microsoft Presidio NLP engines (this may take a moment)...")
+provider = NlpEngineProvider(nlp_configuration={
+    "nlp_engine_name": "spacy",
+    "models": [
+        {"lang_code": "nl", "model_name": "nl_core_news_lg"},
+        {"lang_code": "en", "model_name": "en_core_web_lg"},
+    ]
+})
+nlp_engine = provider.create_engine()
+analyzer = AnalyzerEngine(nlp_engine=nlp_engine, supported_languages=["nl", "en"])
+anonymizer = AnonymizerEngine()
+
+PRESIDIO_OPERATORS = {
+    "PERSON":        OperatorConfig("replace", {"new_value": "[NAME]"}),
+    "EMAIL_ADDRESS": OperatorConfig("replace", {"new_value": "[PII]"}),
+    "PHONE_NUMBER":  OperatorConfig("replace", {"new_value": "[PII]"}),
+    "LOCATION":      OperatorConfig("replace", {"new_value": "[LOCATION]"}),
+    "NRP":           OperatorConfig("replace", {"new_value": "[NAME]"}), # Nationality/Religious/Political sometimes catches groups/names
+    "DEFAULT":       OperatorConfig("keep"), # We ignore other things that Presidio finds
+}
+
+def presidio_anonymize(text: str) -> str:
+    """Uses Microsoft Presidio NER to securely extract structured PII before sending context to LLM."""
+    if not text.strip(): return text
+    
+    # Try to detect language, default to Dutch since data is mostly Dutch
+    try:
+        lang = detect(text)
+        if lang not in ["nl", "en"]:
+            lang = "nl"
+    except LangDetectException:
+        lang = "nl"
+        
+    results = analyzer.analyze(text=text, language=lang)
+    result = anonymizer.anonymize(text=text, analyzer_results=results, operators=PRESIDIO_OPERATORS)
+    return result.text
 
 SYSTEM_PROMPT = """You are a strict text anonymization tool for an educational organization.
 Your ONLY job is to find and replace privacy-sensitive words or phrases with placeholder tags.
@@ -41,6 +85,7 @@ Do NOT tag these — they are generic words, not identifying information:
 === STRICT RULES ===
 - PRESERVE the original sentence structure word-for-word. Replace ONLY the identifying words.
 - Do NOT rewrite, paraphrase, summarize, or restructure any sentence.
+- The input text may already contain tags like [NAME] or [LOCATION] added by a previous system. LEAVE THEM EXACTLY AS THEY ARE.
 - Do NOT invent new tags. Use ONLY: [NAME], [TITLE], [LOCATION], [COURSE/DEPT], [PII], [PHYSICAL_DESCRIPTOR]
 - Do NOT add [PII] or any tag if there is nothing to anonymize in that spot.
 - Return the result as a SINGLE LINE. Never add line breaks or newlines.
@@ -62,18 +107,26 @@ Output: De faciliteiten in het gebouw in [LOCATION] kunnen veel beter, vooral in
 
 def anonymize_text(text: str, model_name: str = 'llama3.2:latest') -> str:
     """
-    Uses a local Ollama model (default: llama3.2:latest) to anonymize names, 
+    Uses Microsoft Presidio followed by a local Ollama model to anonymize names, 
     locations, and educational privacy markers in the given text.
     """
     if pd.isna(text) or not str(text).strip():
         return text
 
+    # Step 1: Highly reliable NER-based anonymization for structured PII (Presidio)
+    text_str = str(text)
+    presidio_anonymized = presidio_anonymize(text_str)
+    
+    if presidio_anonymized != text_str:
+        logging.info(f"Presidio altered text:\n  Before: {text_str}\n  After:  {presidio_anonymized}")
+
     try:
+        # Step 2: Contextual/Educational PII using LLM
         response = client.chat(
             model=model_name,
             messages=[
                 {'role': 'system', 'content': SYSTEM_PROMPT},
-                {'role': 'user', 'content': str(text)}
+                {'role': 'user', 'content': presidio_anonymized}
             ]
         )
         
