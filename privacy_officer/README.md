@@ -1,111 +1,95 @@
 # Privacy Officer AI Agent
 
-A modular Python agent designed to locally anonymize open text responses using an offline LLM (via Ollama). Built for handling 15,000 feedback rows seamlessly in Dutch and English without sending any data to the cloud.
-
-## Features
-- **100% Local**: No cloud APIs (OpenAI, Anthropic) are used. Data never leaves your machine.
-- **Bilingual**: Handles Dutch and English in the same column seamlessly.
-- **Robust Error Handling**: Flags empty LLM outputs or hallucinations for manual review rather than deleting data automatically.
-- **Modular Architecture**: Easy to swap the current CSV `data_loader.py` with a Power BI or Excel connector later.
-- **Container Ready**: Includes a `Dockerfile` and `docker-compose.yml` for easy deployment.
-- **Traceable**: Detailed logging and error checking to ensure no data is lost during the 15,000 row process.
+A robust, 100% offline, dual-layer anonymization tool designed to process open-text feedback (in Dutch and English) for educational institutions. It ensures privacy-sensitive information is removed from datasets before they are used for further analysis, without ever sending data to the cloud.
 
 ---
 
-## 📖 How to Use (Web Interface)
+## 🏗️ Architecture & Tools Used
 
-We have built a simple, clean Web Interface so you don't need to touch code or terminals after setup.
+To balance **speed, deterministic accuracy, and contextual understanding**, this tool uses a dual-layer approach. It combines a fast, rule-based NLP tool with a smart, contextual Large Language Model.
 
-1.  **Start the Server**: See the instructions below.
-2.  **Open the App**: Go to `http://localhost:8000` in your web browser.
-3.  **Upload & Process**: 
-    - Drag and drop your `student_feedback.csv` into the UI.
-    - Click "Start Local Anonymization."
-    - Wait for the progress to finish and click **Download Anonymized CSV**.
-4.  **Review Flags**: Look for any rows tagged with `[NEEDS_REVIEW_ERROR]` or `[NEEDS_REVIEW_EMPTY]`. These are rare cases where the AI was unsure, and they should be checked manually.
+### Layer 1: Microsoft Presidio (Deterministic NER & Regex)
+**What it is:** An open-source data protection tool by Microsoft.
+**What it does:** It scans text using Named Entity Recognition (NER) and Custom Regular Expressions to instantly find and replace structured data.
+**It filters:** 
+- Personal Names
+- Locations (Cities, Campuses)
+- Emails and Phone Numbers
+- Fontys Student Numbers (Custom Regex mapping)
 
----
+### Layer 2: Ollama LLM (Contextual Understanding)
+**What it is:** A local engine running the `llama3.1:8b` Large Language Model.
+**What it does:** It reads the text surrounding the words (the context) to find indirect identification that strict rules might miss.
+**It filters:**
+- Educational Courses or Departments
+- Honorifics/Titles (e.g., "Meneer", "Prof.")
+- Physical Descriptions (e.g., "blonde haren", "rode schoenen")
 
-## 🤖 Which Model is Used & How it Runs
+### How it Works (Flowchart)
 
-This agent relies on **[Ollama](https://ollama.com/)** to run Large Language Models (LLMs) completely locally. You have two ways to run it:
-
-1.  **Fully Containerized (Docker)**: Everything (both the agent and the Ollama model engine) runs inside Docker. This is the most "portable" way and keeps your host machine clean.
-2.  **Local/Hybrid**: You run the agent script (via `venv`) on your machine, but it talks to an Ollama installation you've installed on your Windows/Mac/Linux desktop.
-
-- **Default Model**: The agent uses `llama3.2:latest` (an efficient and free 3B parameter model). 
-- **Offline/Free**: Both methods are 100% offline and cost $0.
-- **Configuration**: The model name and data paths can be changed easily using environment variables, without editing the code!
-  - `OLLAMA_MODEL` (default: `llama3.2:latest`)
-  - `INPUT_FILE` (default: `student_feedback.csv`)
-  - `OUTPUT_FILE` (default: `anonymized_feedback.csv`)
-
----
-
-## 🚀 Getting Started (Without Docker)
-
-1. **Install Ollama**: Ensure [Ollama](https://ollama.com/) is installed and running in your background tray.
-2. **Download the Model**: Pull the default local model:
-   ```bash
-   ollama pull llama3.2
-   ```
-3. **Setup Virtual Environment**:
-   ```bash
-   python -m venv venv
-   # On Windows:
-   venv\Scripts\activate
-   # On macOS/Linux:
-   source venv/bin/activate
-   ```
-4. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-5. **Generate Dummy Data** (for testing):
-   ```bash
-   python create_dummy_data.py
-   ```
-### Running the Web Server
-To start the Privacy Officer interface, simply run:
-```bash
-python -m uvicorn src.api.app:app
+```mermaid
+graph TD
+    A[User Uploads CSV via Web UI] --> B{Layer 1: Microsoft Presidio}
+    B -->|Regex & NER| C[Replaces: Names, Emails, Locations, Student Nrs]
+    C --> D{Layer 2: Local LLM llama3.1:8b}
+    D -->|Contextual Analysis| E[Replaces: Physical Details, Courses, Titles]
+    E -->|Safety Check| F{Length & Refusal Check}
+    F -->|Success| G[Anonymized Row]
+    F -->|Fails Check| H[Retry LLM]
+    H -->|Fails Again| I[Flag for Human Review]
+    G --> J[User Downloads Safe CSV]
+    I --> J
 ```
-*Then open your browser to `http://localhost:8000` to use the tool!*
 
 ---
 
-## ⚙️ Advanced Configuration (Scaling for 15,000 Rows)
+## 🚀 How to Run (Docker Setup)
 
-Processing 15,000 lines sequentiality through an LLM can take a few hours on standard hardware. If you need more speed:
+This project is fully containerized using Docker. You do not need to install Python, pip dependencies, or configure your local environment manually.
 
-1.  **Use a Faster Model**: Run `ollama pull qwen2:0.5b` and set `OLLAMA_MODEL=qwen2:0.5b` before running.
-2.  **GPU Acceleration**: Ensure Ollama is using your system's GPU (NVIDIA/AMD/Metal). This is usually handled automatically by Ollama.
-3.  **Batching**: The code is designed to handle batching natively via the `process_dataframe` loop.
+### Prerequisites
+1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+2. Allocate sufficient memory to Docker. The `llama3.1:8b` model requires at least **8GB - 12GB of RAM** to run smoothly.
 
-## Getting Started (With Docker)
-
-1. Ensure Docker Desktop is installed.
-2. Ensure Ollama is running on your host machine.
-3. Run the following command:
+### Starting the Project
+1. Open your terminal or Command Prompt.
+2. Navigate to the `privacy_officer` folder:
+   ```bash
+   cd c:\fontys\semester_4\group\agents\privacy_officer
+   ```
+3. Run the Docker Compose command:
    ```bash
    docker-compose up --build
    ```
-   *(Note: The `docker-compose.yml` connects to the host machine's Ollama instance via `host.docker.internal`.)*
 
-## Example Data Format
+**What happens during startup?**
+- Docker builds the FastAPI web server (`privacy-agent`).
+- Docker starts the `ollama` container.
+- An entrypoint script (`ollama_entrypoint.sh`) runs inside the Ollama container, automatically pulling and installing the `llama3.1:8b` model (this takes a few minutes the first time).
+- Once the model is loaded, the FastAPI server becomes available.
 
-The application expects input data as a Pandas DataFrame with a specified text column (e.g., `feedback_text`).
+---
 
-**Input CSV (`student_feedback.csv`)**
-```csv
-student_id,feedback_text
-1,"De docent Jan Janssen in Eindhoven gaf geweldige lessen, maar het lokaal was vaak koud."
-2,"I really enjoyed the specific workshop given by Sarah Smith at the Amsterdam campus."
-```
+## 🖥️ Using the Web UI
 
-**Output CSV (`anonymized_feedback.csv`)**
-```csv
-student_id,feedback_text,anonymized_feedback_text
-1,"De docent Jan Janssen in Eindhoven gaf geweldige lessen, maar het lokaal was vaak koud.","[NAME] [TITLE] in [LOCATION] gaf geweldige lessen, maar het [COURSE/DEPT]-lokaal was vaak koud."
-2,"I really enjoyed the specific workshop given by Sarah Smith at the Amsterdam campus.","I really enjoyed the specific workshop given by [NAME] at the [LOCATION]."
-```
+We have built a user-friendly interface to process data without touching code.
+
+1.  **Open the App**: Once Docker is running, go to `http://localhost:8000` in your web browser.
+2.  **Upload**: Drag and drop your `.csv` file.
+3.  **Specify Column**: Enter the exact name of the column containing the text you want to anonymize (e.g., `feedback_text` or `OpenReactie`).
+4.  **Configure Settings**: 
+    - You will see a grid of checkboxes (Names, Locations, Titles, Courses, Physical Details, Student Numbers).
+    - By default, everything is anonymized.
+    - If you *uncheck* a box (e.g., "Locations"), the system dynamically tells Presidio and the LLM skip that category, keeping locations intact in the final output.
+5.  **Process**: Click "Start Local Anonymization." A real-time progress bar will appear.
+6.  **Human Review Warnings**: If the LLM failed to process a row (due to safety refusals or length mismatches), the UI will display a distinct **Orange Warning** telling you exactly how many rows need your manual review.
+
+---
+
+## ⚠️ Advanced: Manual Review Tags
+
+If a row is too complex, or the LLM refuses to anonymize it due to safety constraints, the system will *not* delete the data. Instead, it flags the original row in the output CSV with a specific tag so a human Privacy Officer can easily search and fix it:
+
+- `[NEEDS_REVIEW_LENGTH]`: The LLM output was suspiciously short or long (often a sign of hallucination or refusal).
+- `[NEEDS_REVIEW_REFUSAL]`: The LLM output contained conversational text like "I cannot assist with this."
+- `[NEEDS_REVIEW_LLM_FAIL]`: The LLM failed completely after multiple retries.

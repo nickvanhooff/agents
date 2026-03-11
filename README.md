@@ -6,8 +6,14 @@ A collection of AI agents for the Fontys group project.
 
 | Agent | Description |
 |---|---|
-| [`privacy_officer/`](./privacy_officer/README.md) | Locally anonymizes open-text feedback using an offline LLM (Ollama). Handles Dutch & English. |
+| [`privacy_officer/`](./privacy_officer/README.md) | Fully containerized agent that locally anonymizes open-text feedback using an offline LLM (Ollama 3.1:8B) and Microsoft Presidio. Includes a Web UI, real-time progress tracking, and dynamic PII selection. Handles Dutch & English without sending any data to the cloud. |
 
 ## Getting Started
 
-Each agent is self-contained in its own folder with its own `requirements.txt`, `Dockerfile`, and `README.md`. Navigate into the agent's folder and follow its README.
+The recommended way to run the agents is via **Docker**. 
+
+Navigate into the agent's folder (e.g., `cd privacy_officer`) and run:
+```bash
+docker-compose up --build
+```
+Please read the specific agent's `README.md` for detailed instructions on the tools used, the architecture, and how to use its Web Interface.
