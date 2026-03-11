@@ -1,3 +1,4 @@
+import os
 import ollama
 import pandas as pd
 from tqdm import tqdm
@@ -6,26 +7,57 @@ import time
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-SYSTEM_PROMPT = """You are a highly strict AI Privacy Officer for an educational organization.
-Your ONLY job is to redact sensitive privacy-related information from the input text. 
+# Read OLLAMA_HOST from env so it works both locally and in Docker.
+# Locally: defaults to http://localhost:11434
+# Docker:  docker-compose sets OLLAMA_HOST=http://host.docker.internal:11434
+OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
+client = ollama.Client(host=OLLAMA_HOST)
+logging.info(f"Connecting to Ollama at: {OLLAMA_HOST}")
+
+SYSTEM_PROMPT = """You are a strict text anonymization tool for an educational organization.
+Your ONLY job is to find and replace privacy-sensitive words or phrases with placeholder tags.
 The input text can be in Dutch or English. You MUST NOT translate the text.
 
-You MUST replace the following entities with their respective tags:
-1. Names of ANY people (students, teachers, professors, staff) -> [NAME]
-2. Titles or pronouns accompanying a name (e.g., Meneer, Mevrouw, Dr., Prof., mentor, docent) -> [TITLE]
-3. Specific locations (cities, campuses, street names, buildings) -> [LOCATION]
-4. School organizations, departments, or specific course/module names -> [COURSE/DEPT]
-5. Email addresses, student numbers, or phone numbers -> [PII]
-6. Physical descriptions or appearance details that could identify a person, such as:
-   - Body features (e.g., bald, tall, short, overweight, beard, glasses)
-   - Clothing or style (e.g., white shirt, red jacket, always wears a cap)
-   - Bodily states that are identifying in context (e.g., sweaty, limping)
+=== WHAT TO REPLACE ===
+Replace ONLY these specific entities, using EXACTLY these tags:
+1. Personal names (students, teachers, staff) -> [NAME]
+2. Honorifics/titles directly before a name (Meneer, Mevrouw, Dr., Prof.) -> [TITLE]
+3. Specific named locations: cities, campuses, street names -> [LOCATION]
+4. Specific named courses or department names -> [COURSE/DEPT]
+5. Email addresses, student/employee numbers, phone numbers -> [PII]
+6. Physical appearance details that could identify a specific person:
+   - Specific body features (e.g., kaal, baard, bril)
+   - Specific clothing items (e.g., wit overhemd, rode jas, blauwe pet)
+   - Identifying physical states (e.g., zweterig/sweaty, hinkt)
    -> [PHYSICAL_DESCRIPTOR]
 
-Rules:
-- You must NOT alter the original context, sentiment, meaning, or language of the feedback.
-- Return ONLY the anonymized text and absolutely nothing else. Do not add any conversational filler or introductions.
-- When in doubt about whether something is identifying, redact it.
+=== WHAT NOT TO REPLACE ===
+Do NOT tag these — they are generic words, not identifying information:
+- Generic nouns: workshop, library, bibliotheek, kantine, klas, lokaal, stage, afstudeerstage, campus (when used generically), gebouw
+- Body parts: voeten, handen, hoofd, armen, benen
+- Roles/functions without a name: "de docent", "mijn mentor", "my supervisor" (only tag the NAME that follows, not the role itself)
+- Emotions or actions: boos, schreeuwde, blij
+
+=== STRICT RULES ===
+- PRESERVE the original sentence structure word-for-word. Replace ONLY the identifying words.
+- Do NOT rewrite, paraphrase, summarize, or restructure any sentence.
+- Do NOT invent new tags. Use ONLY: [NAME], [TITLE], [LOCATION], [COURSE/DEPT], [PII], [PHYSICAL_DESCRIPTOR]
+- Do NOT add [PII] or any tag if there is nothing to anonymize in that spot.
+- Return the result as a SINGLE LINE. Never add line breaks or newlines.
+- Return ONLY the anonymized text. No explanations, no introductions.
+
+=== EXAMPLES ===
+Input:  De docent Jan Janssen in Eindhoven gaf geweldige lessen.
+Output: De docent [NAME] in [LOCATION] gaf geweldige lessen.
+
+Input:  I really enjoyed the specific workshop given by Sarah Smith at the Amsterdam campus.
+Output: I really enjoyed the specific workshop given by [NAME] at the [LOCATION] campus.
+
+Input:  the teacher who is bald and with a white shirt on and sweaty was really mad.
+Output: the teacher who is [PHYSICAL_DESCRIPTOR] and with a [PHYSICAL_DESCRIPTOR] on and [PHYSICAL_DESCRIPTOR] was really mad.
+
+Input:  De faciliteiten in het gebouw in Den Haag kunnen veel beter, vooral in de kantine van mevrouw Bakker.
+Output: De faciliteiten in het gebouw in [LOCATION] kunnen veel beter, vooral in de kantine van [TITLE] [NAME].
 """
 
 def anonymize_text(text: str, model_name: str = 'llama3.2:latest') -> str:
@@ -37,7 +69,7 @@ def anonymize_text(text: str, model_name: str = 'llama3.2:latest') -> str:
         return text
 
     try:
-        response = ollama.chat(
+        response = client.chat(
             model=model_name,
             messages=[
                 {'role': 'system', 'content': SYSTEM_PROMPT},

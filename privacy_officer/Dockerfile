@@ -10,5 +10,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
-# Command to run dummy data generation then the main application
-CMD ["sh", "-c", "python create_dummy_data.py && python main.py"]
+CMD ["python", "-m", "uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
