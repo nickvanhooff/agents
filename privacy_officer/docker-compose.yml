@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  privacy-agent:
+    build: .
+    volumes:
+      - .:/app
+    environment:
+      # If Ollama is running on the host machine, you might need to adjust this depending on the OS (e.g., host.docker.internal)
+      - OLLAMA_HOST=http://host.docker.internal:11434
+    depends_on:
+      - ollama
+
+  # Optional local ollama instance if not using the host one
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+volumes:
+  ollama_data:

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Officer AI Agent</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f6f9;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        .header h1 {
+            color: #1a4f8f;
+        }
+        .card {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        input[type="text"], input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #1a4f8f;
+            color: white;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #133a6f;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            display: none;
+        }
+        .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .processing { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; text-align: center; }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #1a4f8f;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px auto;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        a.download-btn {
+            display: inline-block;
+            background-color: #28a745;
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            margin-top: 15px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>🛡️ Privacy Officer AI Agent</h1>
+        <p>Offline, zero-leak text anonymization interface.</p>
+    </div>
+
+    <div class="card">
+        <form id="uploadForm">
+            <div class="form-group">
+                <label for="csvFile">1. Upload Raw Data (CSV)</label>
+                <input type="file" id="csvFile" name="file" accept=".csv" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="columnName">2. Column to Anonymize</label>
+                <input type="text" id="columnName" name="text_column" value="feedback_text" required>
+            </div>
+
+            <button type="submit" id="submitBtn">Start Local Anonymization</button>
+        </form>
+
+        <div id="status"></div>
+    </div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const form = document.getElementById('uploadForm');
+            const statusDiv = document.getElementById('status');
+            const submitBtn = document.getElementById('submitBtn');
+            const fileInput = document.getElementById('csvFile').files[0];
+            const columnName = document.getElementById('columnName').value;
+
+            if(!fileInput) return;
+
+            // Update UI to Processing state
+            statusDiv.className = 'status processing';
+            statusDiv.innerHTML = '<div class="spinner"></div><p>Processing with strictly local offline models. This may take a moment depending on file size...</p>';
+            statusDiv.style.display = 'block';
+            submitBtn.disabled = true;
+
+            const formData = new FormData();
+            formData.append('file', fileInput);
+            formData.append('text_column', columnName);
+
+            try {
+                const response = await fetch('/api/anonymize', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if(response.ok) {
+                    statusDiv.className = 'status success';
+                    statusDiv.innerHTML = `
+                        <strong>✅ Dataset successfully anonymized!</strong><br>
+                        Local Ollama parsing complete.
+                        <a href="${result.download_url}" class="download-btn" download>📥 Download Anonymized CSV</a>
+                    `;
+                } else {
+                    statusDiv.className = 'status error';
+                    statusDiv.innerHTML = `<strong>❌ Error:</strong> ${result.detail || result.error || 'Pipeline failed to process file.'}`;
+                }
+            } catch (error) {
+                statusDiv.className = 'status error';
+                statusDiv.innerHTML = `<strong>❌ Connection Error:</strong> Ensure the FastAPI server is running. (${error.message})`;
+            } finally {
+                submitBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

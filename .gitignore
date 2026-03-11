@@ -1,0 +1,32 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Environment variables
+.env
+.env.*
+
+# Data files (uploaded/processed CSVs)
+privacy_officer/uploads/
+*.csv
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docker
+*.log
+
+# Nuxt / Node (future agents)
+node_modules/
+.nuxt/
+.output/
