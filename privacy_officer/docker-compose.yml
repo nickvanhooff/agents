@@ -14,7 +14,7 @@ services:
   ollama:
     image: ollama/ollama
     ports:
-      - "11434:11434"
+      - "11435:11434"  # Changed host port to 11435 to avoid conflict with local Windows Ollama
     volumes:
       - ollama_data:/root/.ollama
       - ./scripts/ollama_entrypoint.sh:/entrypoint.sh

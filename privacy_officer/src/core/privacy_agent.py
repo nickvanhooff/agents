@@ -82,82 +82,34 @@ def presidio_anonymize(text: str, config: dict = None) -> str:
     return result.text
 
 def get_dynamic_prompt(config: dict = None) -> str:
-    """Builds the system prompt dynamically based on what the user wants to anonymize."""
-    prompt = """You are a strict text anonymization tool for an educational organization.
-Your ONLY job is to find and replace privacy-sensitive words or phrases with placeholder tags.
-The input text can be in Dutch or English. You MUST NOT translate the text.
+    """Builds a strict JSON extraction prompt based on user settings."""
+    prompt = """You are a strict data extraction tool. Your ONLY job is to extract identifying entities from the text.
+You MUST output ONLY a valid JSON object. Do not output anything else.
+The JSON object must contain arrays of exact strings found in the text that match the requested categories.
+If no matches are found for a category, return an empty array [] for that key.
 
-=== WHAT TO REPLACE ===
-Replace ONLY these specific entities, using EXACTLY these tags:\n"""
+=== CATEGORIES TO EXTRACT ===\n"""
 
-    allowed_tags = []
-    
     if not config or config.get("names", True):
-        prompt += "1. Personal names (students, teachers, staff) -> [NAME]\n"
-        allowed_tags.append("[NAME]")
+        prompt += "- 'names': Personal names (students, teachers, staff)\n"
     if not config or config.get("titles", True):
-        prompt += "2. Honorifics/titles directly before a name (Meneer, Mevrouw, Dr., Prof.) -> [TITLE]\n"
-        allowed_tags.append("[TITLE]")
+        prompt += "- 'titles': Honorifics or titles directly before a name (e.g., Meneer, Mevrouw, Dr., docent, mentor)\n"
     if not config or config.get("locations", True):
-        prompt += "3. Specific named locations: cities, campuses, street names -> [LOCATION]\n"
-        allowed_tags.append("[LOCATION]")
+        prompt += "- 'locations': Specific locations (cities, campuses, street names)\n"
     if not config or config.get("courses", True):
-        prompt += "4. Specific named courses or department names -> [COURSE/DEPT]\n"
-        allowed_tags.append("[COURSE/DEPT]")
-    if not config or config.get("pii", True):
-        prompt += "5. Email addresses, student/employee numbers, phone numbers -> [PII]\n"
-        allowed_tags.append("[PII]")
+        prompt += "- 'courses': Specific named courses or department names\n"
+    if not config or config.get("pii", True) or config.get("student_nr", True):
+        prompt += "- 'pii': Email addresses, student numbers, employee numbers, phone numbers\n"
     if not config or config.get("physical", True):
-        prompt += """6. Physical appearance details that could identify a specific person:
-   - Specific body features (e.g., kaal, baard, bril)
-   - Specific clothing items (e.g., wit overhemd, rode jas, blauwe pet)
-   - Identifying physical states (e.g., zweterig/sweaty, hinkt)
-   -> [PHYSICAL_DESCRIPTOR]\n"""
-        allowed_tags.append("[PHYSICAL_DESCRIPTOR]")
+        prompt += "- 'physical': Physical appearance details identifying a person (e.g., kaal, baard, rode jas)\n"
 
-    prompt += "\n=== WHAT NOT TO REPLACE ===\n"
-    prompt += "Do NOT tag these — they are generic words, not identifying information:\n"
-    prompt += "- Generic nouns: workshop, library, bibliotheek, kantine, klas, lokaal, stage, afstudeerstage, campus (when used generically), gebouw\n"
-    prompt += "- Food, drinks, and facilities: koffie, thee, eten, drinken, lunch, stoelen, tafels\n"
-    prompt += "- Body parts: voeten, handen, hoofd, armen, benen\n"
-    prompt += "- Roles/functions without a name: \"de docent\", \"mijn mentor\", \"my supervisor\"\n"
-    prompt += "- Emotions or actions: boos, schreeuwde, blij, huilt\n"
-    prompt += "- Numbers, scores, or grades: e.g., '1', '4', '8.5', '10'. NEVER replace these standalone numbers.\n"
-    
-    # Explicitly tell the LLM to IGNORE categories that are turned off
-    forbidden_tags = [t for t in ["[NAME]", "[TITLE]", "[LOCATION]", "[COURSE/DEPT]", "[PII]", "[PHYSICAL_DESCRIPTOR]"] if t not in allowed_tags]
-    if forbidden_tags:
-        prompt += f"\nCRITICAL: The user has DISABLED the following tags: {', '.join(forbidden_tags)}. You MUST completely IGNNORE these entities and leave them in the text as normal words! Do not use these tags under any circumstances!\n"
-
-    prompt += f"""
+    prompt += """
 === STRICT RULES ===
-- PRESERVE the original sentence structure word-for-word. Replace ONLY the identifying words.
-- Do NOT rewrite, paraphrase, summarize, or restructure any sentence.
-- NEVER replace numbers, scores, or grades (such as '1', '2', '5', '8.5') with tags like [COURSE/DEPT] or [PII]. Keep them EXACTLY as numbers.
-- The input text may already contain tags like [NAME] or [LOCATION] added by a previous system. LEAVE THEM EXACTLY AS THEY ARE.
-- Do NOT invent new tags. Use ONLY the tags exactly as listed in the 'WHAT TO REPLACE' section: {', '.join(allowed_tags)}.
-- Do NOT add a tag if there is nothing to anonymize in that spot.
-- Return the result as a SINGLE LINE. Never add line breaks, newlines, or conversational text.
-- Return ONLY the anonymized text. NO explanations, NO introductions, NO apologies, NO "Here is the text".
-- DO NOT REFUSE. You are an automated system. If a sentence is difficult, just return the sentence with whatever tags you can apply. Do NOT ever say "Ik kan dit niet" or "Sorry".
-
-=== EXAMPLES ===
+1. The strings in your JSON arrays MUST be EXACT substrings from the input text. Do not correct spelling or alter capitalization.
+2. DO NOT extract generic words (like 'workshop', 'bibliotheek', 'kantine', 'eten', 'voeten', 'blij'). 
+3. DO NOT extract standalone numbers or grades (like '1', '4', '8.5').
+4. The output must be parsable by Python's json.loads().
 """
-    # Dynamic examples so the LLM doesn't learn from tags it's not supposed to use
-    if "[NAME]" in allowed_tags and "[LOCATION]" in allowed_tags:
-        prompt += "Input:  De docent Jan Janssen in Eindhoven gaf geweldige lessen.\nOutput: De docent [NAME] in [LOCATION] gaf geweldige lessen.\n\n"
-    elif "[NAME]" in allowed_tags:
-        prompt += "Input:  De docent Jan Janssen in Eindhoven gaf geweldige lessen.\nOutput: De docent [NAME] in Eindhoven gaf geweldige lessen.\n\n"
-    elif "[LOCATION]" in allowed_tags:
-        prompt += "Input:  De docent Jan Janssen in Eindhoven gaf geweldige lessen.\nOutput: De docent Jan Janssen in [LOCATION] gaf geweldige lessen.\n\n"
-
-    if "[PHYSICAL_DESCRIPTOR]" in allowed_tags:
-        prompt += "Input:  the teacher who is bald and with a white shirt on and sweaty was really mad.\nOutput: the teacher who is [PHYSICAL_DESCRIPTOR] and with a [PHYSICAL_DESCRIPTOR] on and [PHYSICAL_DESCRIPTOR] was really mad.\n\n"
-        prompt += "Input:  docent pietre had rode schoenen aan en een blauwe jas in de klas.\nOutput: docent [NAME] had [PHYSICAL_DESCRIPTOR] aan en een [PHYSICAL_DESCRIPTOR] in de klas.\n\n"
-        prompt += "Input:  de docent met grote schoenen en teenslippers had haren op zijn voeten.\nOutput: de docent met [PHYSICAL_DESCRIPTOR] en [PHYSICAL_DESCRIPTOR] had [PHYSICAL_DESCRIPTOR].\n\n"
-    else:
-        prompt += "Input:  the teacher who is bald and with a white shirt on and sweaty was really mad.\nOutput: the teacher who is bald and with a white shirt on and sweaty was really mad.\n\n"
-
     return prompt
 
 def anonymize_text(text: str, model_name: str = 'llama3.2:latest', config: dict = None) -> str:
@@ -197,6 +149,10 @@ def anonymize_text(text: str, model_name: str = 'llama3.2:latest', config: dict 
             operators=operators
         )
         presidio_anonymized = anonymized_result.text
+        
+        if results:
+            logging.info(f"Presidio matched {len(results)} entities -> Output: '{presidio_anonymized}'")
+            
     except Exception as e:
         logging.error(f"Presidio error on '{text[:30]}...': {e}")
         presidio_anonymized = text
@@ -205,57 +161,47 @@ def anonymize_text(text: str, model_name: str = 'llama3.2:latest', config: dict 
     if config and not any(config.values()):
         return text
 
-    # Step 2: Local LLM (Contextual PII via Ollama)
     try:
         prompt_str = get_dynamic_prompt(config)
+        import json
+        import re
         
-        # Implement Retry Logic for LLM Flaws
-        max_retries = 2
-        for attempt in range(max_retries):
-            response = client.chat(model=model_name, messages=[
-                {"role": "system", "content": prompt_str},
-                {"role": "user", "content": presidio_anonymized}
-            ])
-            
-            anonymized = response['message']['content'].strip()
-            
-            # Check if output is suspiciously shorter or longer than input
-            input_len = len(str(text))
-            output_len = len(anonymized)
-            
-            needs_retry = False
-            
-            if output_len < (input_len * 0.2) or output_len > (input_len * 3.5):
-                if attempt < max_retries - 1:
-                    logging.info(f"Retrying LLM due to length mismatch. Attempt {attempt + 1}")
-                    needs_retry = True
-                else:
-                    logging.warning(f"Suspicious output length for input: '{text[:30]}...' Flagging for review.")
-                    return f"[NEEDS_REVIEW_LENGTH] {text}"
-
-            # Check for common LLM safety refusals / conversational apologies
-            if not needs_retry:
-                refusal_phrases = [
-                    "ik kan je niet helpen", "ik kan u niet helpen", 
-                    "ik kan u niet assisteren", "i cannot", "i can't", 
-                    "sorry", "als ai", "as an ai", "privacybreuk", "identificatienummer",
-                    "ik kan dat niet", "ik kan dit niet", "ik kan de tekst niet", "ik heb niets vervangen"
-                ]
-                lower_anonymized = anonymized.lower()
-                if any(phrase in lower_anonymized for phrase in refusal_phrases) or "\n" in anonymized:
-                    if attempt < max_retries - 1:
-                        logging.info(f"Retrying LLM due to safety refusal or conversational text. Attempt {attempt + 1}")
-                        needs_retry = True
-                    else:
-                        logging.warning(f"Model safety refusal detected for input: '{text[:30]}...' Flagging for review.")
-                        return f"[NEEDS_REVIEW_REFUSAL] {text}"
-            
-            if not needs_retry:
-                return anonymized
-
-        # If all retries fail, return the presidio-anonymized text or an error flag
-        return f"[NEEDS_REVIEW_LLM_FAIL] {text}" # Changed to a specific error flag
+        response = client.chat(model=model_name, messages=[
+            {"role": "system", "content": prompt_str},
+            {"role": "user", "content": presidio_anonymized}
+        ], format="json")
         
+        # safely parse the json response
+        try:
+            extracted_entities = json.loads(response['message']['content'].strip())
+        except json.JSONDecodeError:
+            logging.error(f"Failed to parse JSON for input: {text[:30]}")
+            return f"[NEEDS_REVIEW_ERROR] {text}"
+            
+        anonymized = presidio_anonymized
+        
+        # We sort by length descending to replace larger phrases before smaller overlaps
+        tag_map = {
+            "names": "[NAME]",
+            "titles": "[TITLE]",
+            "locations": "[LOCATION]",
+            "courses": "[COURSE/DEPT]",
+            "pii": "[PII]",
+            "physical": "[PHYSICAL_DESCRIPTOR]"
+        }
+        
+        for category, entities in extracted_entities.items():
+            if isinstance(entities, list) and category in tag_map:
+                tag = tag_map[category]
+                # Sort descending length so "John Doe" replaces before "John"
+                entities.sort(key=len, reverse=True)
+                for entity in entities:
+                    if isinstance(entity, str) and entity and entity in anonymized:
+                        # Case insensitive replacement via regex but preserving case of other words
+                        pattern = re.compile(re.escape(entity), re.IGNORECASE)
+                        anonymized = pattern.sub(tag, anonymized)
+                        
+        return anonymized
 
     except Exception as e:
         logging.error(f"LLM error on '{text[:30]}...': {e}")
