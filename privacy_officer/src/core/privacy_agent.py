@@ -1,6 +1,7 @@
 import os
 import re
 import json
+from typing import Optional, Set
 import ollama
 import pandas as pd
 from tqdm import tqdm
@@ -162,51 +163,63 @@ If no matches are found for a category, return an empty array [] for that key.
 """
     return prompt
 
-def anonymize_text(text: str, model_name: str = 'aya-expanse:8b', config: dict = None) -> str:
-    """Anonymize a single text string using Presidio and local LLM."""
+# Accepted layer IDs: "1"=Presidio, "2"=EU-PII-Safeguard, "3"=LLM. None = all layers.
+VALID_LAYER_IDS: Set[str] = {"1", "2", "3"}
+
+
+def anonymize_text(
+    text: str,
+    model_name: str = 'aya-expanse:8b',
+    config: Optional[dict] = None,
+    layers: Optional[Set[str]] = None
+) -> str:
+    """Anonymize text using selected layers. layers=None runs all layers; otherwise only IDs in layers (e.g. {'1','3'})."""
     if not isinstance(text, str) or not text.strip():
         return text
 
     # Step 1: Microsoft Presidio (Deterministic Regex/NER)
-    try:
-        # Try to detect language, default to Dutch since data is mostly Dutch
+    if layers is None or "1" in layers:
         try:
-            lang = detect(text)
-            if lang not in ["nl", "en"]:
+            # Try to detect language, default to Dutch since data is mostly Dutch
+            try:
+                lang = detect(text)
+                if lang not in ["nl", "en"]:
+                    lang = "nl"
+            except LangDetectException:
                 lang = "nl"
-        except LangDetectException:
-            lang = "nl"
 
-        results = analyzer.analyze(text=text, language=lang)
-        
-        # Build operators based on config
-        operators = {}
-        if config:
-            operators["PERSON"] = OperatorConfig("replace", {"new_value": "[NAME]"}) if config.get("names", True) else OperatorConfig("keep")
-            operators["NRP"] = OperatorConfig("replace", {"new_value": "[NAME]"}) if config.get("names", True) else OperatorConfig("keep") # Added NRP back based on original presidio_anonymize
-            operators["LOCATION"] = OperatorConfig("replace", {"new_value": "[LOCATION]"}) if config.get("locations", True) else OperatorConfig("keep")
-            operators["EMAIL_ADDRESS"] = OperatorConfig("replace", {"new_value": "[PII]"}) if config.get("pii", True) else OperatorConfig("keep")
-            operators["PHONE_NUMBER"] = OperatorConfig("replace", {"new_value": "[PII]"}) if config.get("pii", True) else OperatorConfig("keep")
-            operators["STUDENT_NUMBER"] = OperatorConfig("replace", {"new_value": "[PII]"}) if config.get("pii", True) else OperatorConfig("keep") # Changed from student_nr to pii based on original presidio_anonymize
-        else:
-            operators = PRESIDIO_OPERATORS
-        
-        operators["DEFAULT"] = OperatorConfig("keep") # Added back based on original presidio_anonymize
-            
-        anonymized_result = anonymizer.anonymize(
-            text=text,
-            analyzer_results=results,
-            operators=operators
-        )
-        presidio_anonymized = anonymized_result.text
+            results = analyzer.analyze(text=text, language=lang)
 
-        if results:
-            entities_desc = [f"'{text[r.start:r.end]}' ({r.entity_type})" for r in results]
-            logging.info(f"Presidio caught {len(results)} entities: {', '.join(entities_desc)}")
-            logging.info(f"Presidio output: '{presidio_anonymized}'")
+            # Build operators based on config
+            operators = {}
+            if config:
+                operators["PERSON"] = OperatorConfig("replace", {"new_value": "[NAME]"}) if config.get("names", True) else OperatorConfig("keep")
+                operators["NRP"] = OperatorConfig("replace", {"new_value": "[NAME]"}) if config.get("names", True) else OperatorConfig("keep")
+                operators["LOCATION"] = OperatorConfig("replace", {"new_value": "[LOCATION]"}) if config.get("locations", True) else OperatorConfig("keep")
+                operators["EMAIL_ADDRESS"] = OperatorConfig("replace", {"new_value": "[PII]"}) if config.get("pii", True) else OperatorConfig("keep")
+                operators["PHONE_NUMBER"] = OperatorConfig("replace", {"new_value": "[PII]"}) if config.get("pii", True) else OperatorConfig("keep")
+                operators["STUDENT_NUMBER"] = OperatorConfig("replace", {"new_value": "[PII]"}) if config.get("pii", True) else OperatorConfig("keep")
+            else:
+                operators = PRESIDIO_OPERATORS
 
-    except Exception as e:
-        logging.error(f"Presidio error on '{text[:30]}...': {e}")
+            operators["DEFAULT"] = OperatorConfig("keep")
+
+            anonymized_result = anonymizer.anonymize(
+                text=text,
+                analyzer_results=results,
+                operators=operators
+            )
+            presidio_anonymized = anonymized_result.text
+
+            if results:
+                entities_desc = [f"'{text[r.start:r.end]}' ({r.entity_type})" for r in results]
+                logging.info(f"Presidio caught {len(results)} entities: {', '.join(entities_desc)}")
+                logging.info(f"Presidio output: '{presidio_anonymized}'")
+
+        except Exception as e:
+            logging.error(f"Presidio error on '{text[:30]}...': {e}")
+            presidio_anonymized = text
+    else:
         presidio_anonymized = text
 
     # If everything is turned off, just return original text
@@ -214,64 +227,76 @@ def anonymize_text(text: str, model_name: str = 'aya-expanse:8b', config: dict =
         return text
 
     # Step 2: eu-pii-safeguard — catches named entities Presidio missed
-    eu_pii_anonymized = eu_pii_safeguard_anonymize(presidio_anonymized, config)
+    if layers is None or "2" in layers:
+        eu_pii_anonymized = eu_pii_safeguard_anonymize(presidio_anonymized, config)
+    else:
+        eu_pii_anonymized = presidio_anonymized
 
-    try:
-        prompt_str = get_dynamic_prompt(config)
-
-        # Step 3: LLM — catches indirect/contextual PII that NER layers missed
-        response = client.chat(model=model_name, messages=[
-            {"role": "system", "content": prompt_str},
-            {"role": "user", "content": eu_pii_anonymized}
-        ], format="json")
-        
-        # safely parse the json response
+    if layers is None or "3" in layers:
         try:
-            extracted_entities = json.loads(response['message']['content'].strip())
-        except json.JSONDecodeError:
-            logging.error(f"Failed to parse JSON for input: {text[:30]}")
+            prompt_str = get_dynamic_prompt(config)
+
+            # Step 3: LLM — catches indirect/contextual PII that NER layers missed
+            response = client.chat(model=model_name, messages=[
+                {"role": "system", "content": prompt_str},
+                {"role": "user", "content": eu_pii_anonymized}
+                ], format="json")
+
+            # safely parse the json response
+            try:
+                extracted_entities = json.loads(response['message']['content'].strip())
+            except json.JSONDecodeError:
+                logging.error(f"Failed to parse JSON for input: {text[:30]}")
+                return f"[NEEDS_REVIEW_ERROR] {text}"
+
+            anonymized = eu_pii_anonymized
+
+            # We sort by length descending to replace larger phrases before smaller overlaps
+            tag_map = {
+                "names": "[NAME]",
+                "titles": "[TITLE]",
+                "locations": "[LOCATION]",
+                "courses": "[COURSE/DEPT]",
+                "pii": "[PII]",
+                "physical": "[PHYSICAL_DESCRIPTOR]"
+            }
+
+            llm_replaced = []
+            for category, entities in extracted_entities.items():
+                if isinstance(entities, list) and category in tag_map:
+                    tag = tag_map[category]
+                    # Sort descending length so "John Doe" replaces before "John"
+                    entities.sort(key=len, reverse=True)
+                    for entity in entities:
+                        if isinstance(entity, str) and entity and entity in anonymized:
+                            # Case insensitive replacement via regex but preserving case of other words
+                            pattern = re.compile(re.escape(entity), re.IGNORECASE)
+                            new_anonymized = pattern.sub(tag, anonymized)
+                            if new_anonymized != anonymized:
+                                llm_replaced.append(f"'{entity}' ({category} → {tag})")
+                                anonymized = new_anonymized
+
+            if llm_replaced:
+                logging.info(f"LLM caught {len(llm_replaced)} additional entities: {', '.join(llm_replaced)}")
+
+            return anonymized
+
+        except Exception as e:
+            logging.error(f"LLM error on '{text[:30]}...': {e}")
             return f"[NEEDS_REVIEW_ERROR] {text}"
-            
-        anonymized = eu_pii_anonymized
+    else:
+        return eu_pii_anonymized
 
-        # We sort by length descending to replace larger phrases before smaller overlaps
-        tag_map = {
-            "names": "[NAME]",
-            "titles": "[TITLE]",
-            "locations": "[LOCATION]",
-            "courses": "[COURSE/DEPT]",
-            "pii": "[PII]",
-            "physical": "[PHYSICAL_DESCRIPTOR]"
-        }
-        
-        llm_replaced = []
-        for category, entities in extracted_entities.items():
-            if isinstance(entities, list) and category in tag_map:
-                tag = tag_map[category]
-                # Sort descending length so "John Doe" replaces before "John"
-                entities.sort(key=len, reverse=True)
-                for entity in entities:
-                    if isinstance(entity, str) and entity and entity in anonymized:
-                        # Case insensitive replacement via regex but preserving case of other words
-                        pattern = re.compile(re.escape(entity), re.IGNORECASE)
-                        new_anonymized = pattern.sub(tag, anonymized)
-                        if new_anonymized != anonymized:
-                            llm_replaced.append(f"'{entity}' ({category} → {tag})")
-                            anonymized = new_anonymized
-                            
-        if llm_replaced:
-            logging.info(f"LLM caught {len(llm_replaced)} additional entities: {', '.join(llm_replaced)}")
-            
-        return anonymized
-
-    except Exception as e:
-        logging.error(f"LLM error on '{text[:30]}...': {e}")
-        return f"[NEEDS_REVIEW_ERROR] {text}"
-
-def process_dataframe(df: pd.DataFrame, text_column: str, model_name: str = 'aya-expanse:8b', config: dict = None, progress_state: dict = None) -> pd.DataFrame:
+def process_dataframe(
+    df: pd.DataFrame,
+    text_column: str,
+    model_name: str = 'aya-expanse:8b',
+    config: Optional[dict] = None,
+    progress_state: Optional[dict] = None,
+    layers: Optional[Set[str]] = None
+) -> pd.DataFrame:
     """
-    Processes a Pandas DataFrame, applying the anonymization function to the specified text column
-    with a progress bar. Safe to run locally with no cloud connections.
+    Apply anonymization to a text column. layers=None uses all layers; otherwise only the given IDs (e.g. {"1","3"}).
     """
     logging.info(f"Starting anonymization process using model: {model_name}. Total rows: {len(df)}")
     
@@ -285,7 +310,7 @@ def process_dataframe(df: pd.DataFrame, text_column: str, model_name: str = 'aya
     
     # Iterate with tqdm for a progress bar
     for i, text in enumerate(tqdm(processed_df[text_column], desc="Anonymizing feedback")):
-        anonymized_texts.append(anonymize_text(text, model_name, config))
+        anonymized_texts.append(anonymize_text(text, model_name, config, layers))
         
         if progress_state is not None:
             progress_state["percentage"] = int(((i + 1) / total_rows) * 100)

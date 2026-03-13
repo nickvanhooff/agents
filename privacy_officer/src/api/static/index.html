@@ -34,12 +34,19 @@
             margin-bottom: 8px;
             font-weight: bold;
         }
-        input[type="text"], input[type="file"] {
+        input[type="text"], input[type="file"], select {
             width: 100%;
             padding: 10px;
             border: 1px solid #ccc;
             border-radius: 5px;
             box-sizing: border-box;
+        }
+        .form-hint {
+            display: block;
+            margin-top: 6px;
+            color: #6c757d;
+            font-size: 12px;
+            font-weight: normal;
         }
         button {
             background-color: #1a4f8f;
@@ -147,7 +154,26 @@
             </div>
 
             <div class="form-group">
-                <label>3. Entity Types to Anonymize</label>
+                <label>3. Anonymization Layers</label>
+                <div class="settings-grid">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="layer_1" name="layer_1" value="1" checked>
+                        <label for="layer_1" style="margin:0; font-weight:normal;">Layer 1: Presidio (regex/NER)</label>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="layer_2" name="layer_2" value="2" checked>
+                        <label for="layer_2" style="margin:0; font-weight:normal;">Layer 2: EU-PII-Safeguard (transformer)</label>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="layer_3" name="layer_3" value="3" checked>
+                        <label for="layer_3" style="margin:0; font-weight:normal;">Layer 3: LLM (contextual)</label>
+                    </div>
+                </div>
+                <small class="form-hint">Uncheck layers to exclude them. All unchecked = all layers run.</small>
+            </div>
+
+            <div class="form-group">
+                <label>4. Entity Types to Anonymize</label>
                 <div class="settings-grid">
                     <div class="checkbox-group">
                         <input type="checkbox" id="anon_names" name="anon_names" checked>
@@ -228,6 +254,10 @@
             formData.append('anon_physical', document.getElementById('anon_physical').checked);
             formData.append('anon_courses', document.getElementById('anon_courses').checked);
             formData.append('anon_student_nr', document.getElementById('anon_student_nr').checked);
+            for (const id of ['layer_1', 'layer_2', 'layer_3']) {
+                const cb = document.getElementById(id);
+                if (cb && cb.checked) formData.append('layers', cb.value);
+            }
 
             // Connect to Server-Sent Events for progress
             const eventSource = new EventSource('/api/progress');

@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+from typing import List
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -42,7 +43,8 @@ async def anonymize_csv(
     anon_titles: bool = Form(True),
     anon_physical: bool = Form(True),
     anon_courses: bool = Form(True),
-    anon_student_nr: bool = Form(True)
+    anon_student_nr: bool = Form(True),
+    layers: List[str] = Form(default=[])
 ):
     """
     Takes an uploaded CSV, runs it through the local Ollama Privacy Agent, 
@@ -73,7 +75,20 @@ async def anonymize_csv(
     # Helper to parse string form values to booleans (since JS sends "true"/"false")
     def parse_bool(val):
         return str(val).lower() == 'true'
-        
+
+    # Normalize layers: empty list = all layers (None); otherwise validate and pass set
+    VALID_LAYERS = {"1", "2", "3"}
+    if not layers:
+        layers_set = None  # all layers
+    else:
+        layers_set = set(str(l).strip() for l in layers if l)
+        invalid = layers_set - VALID_LAYERS
+        if invalid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid layer(s): {sorted(invalid)}. Valid: 1, 2, 3."
+            )
+
     config = {
         "names": parse_bool(anon_names),
         "locations": parse_bool(anon_locations),
@@ -88,7 +103,7 @@ async def anonymize_csv(
     model_name = os.getenv('OLLAMA_MODEL', 'aya-expanse:8b')
     
     # We pass progress_state to process_dataframe so it can update it in real-time
-    processed_df = process_dataframe(df, text_column=text_column, model_name=model_name, config=config, progress_state=progress_state)
+    processed_df = process_dataframe(df, text_column=text_column, model_name=model_name, config=config, progress_state=progress_state, layers=layers_set)
     
     # 3. Export to a new CSV file
     processed_df.to_csv(output_path, index=False)
