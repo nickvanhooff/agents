@@ -5,9 +5,11 @@ services:
       - "8000:8000"
     volumes:
       - .:/app
+      - huggingface_cache:/root/.cache/huggingface
     environment:
       - OLLAMA_HOST=http://ollama:11434
-      - OLLAMA_MODEL=llama3.1:8b
+      - OLLAMA_MODEL=${OLLAMA_MODEL}
+      - PYTHONUNBUFFERED=1
     depends_on:
       - ollama
 
@@ -29,3 +31,4 @@ services:
 
 volumes:
   ollama_data:
+  huggingface_cache:

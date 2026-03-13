@@ -16,7 +16,7 @@ def main():
     TEXT_COLUMN_TO_ANONYMIZE = os.getenv('TEXT_COLUMN', 'feedback_text')
     
     # Configure which model Ollama uses locally. Default is 'llama3.2:latest' which is free and efficient for this task.
-    MODEL_NAME = os.getenv('OLLAMA_MODEL', 'llama3.2:latest') 
+    MODEL_NAME = os.getenv('OLLAMA_MODEL', 'aya-expanse:8b') 
 
     logger.info("Initializing Privacy Officer AI Agent Workflow...")
 

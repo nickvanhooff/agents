@@ -1,5 +1,6 @@
 # Python
 venv/
+venv_local/
 __pycache__/
 *.py[cod]
 *.pyo
@@ -12,6 +13,7 @@ build/
 # Environment variables
 .env
 .env.*
+!.env.example
 
 # Data files (uploaded/processed CSVs)
 privacy_officer/uploads/
@@ -20,6 +22,7 @@ privacy_officer/uploads/
 # IDE & OS
 .vscode/
 .idea/
+.claude/
 .DS_Store
 Thumbs.db
 

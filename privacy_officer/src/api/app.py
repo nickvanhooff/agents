@@ -56,7 +56,11 @@ async def anonymize_csv(
         shutil.copyfileobj(file.file, buffer)
 
     # 2. Process using our offline AI logic
-    df = pd.read_csv(input_path)
+    try:
+        df = pd.read_csv(input_path)
+    except UnicodeDecodeError:
+        # Fallback to Latin-1 if UTF-8 fails (common for files with special characters like ë)
+        df = pd.read_csv(input_path, encoding='latin-1')
     
     if text_column not in df.columns:
         raise HTTPException(status_code=400, detail=f"Column '{text_column}' not found in the CSV. Available columns: {list(df.columns)}")
@@ -81,7 +85,7 @@ async def anonymize_csv(
     }
     
     # Using our default local model standard
-    model_name = os.getenv('OLLAMA_MODEL', 'llama3.2:latest')
+    model_name = os.getenv('OLLAMA_MODEL', 'aya-expanse:8b')
     
     # We pass progress_state to process_dataframe so it can update it in real-time
     processed_df = process_dataframe(df, text_column=text_column, model_name=model_name, config=config, progress_state=progress_state)

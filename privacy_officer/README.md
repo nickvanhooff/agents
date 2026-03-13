@@ -1,44 +1,49 @@
 # Privacy Officer AI Agent
 
-A robust, 100% offline, dual-layer anonymization tool designed to process open-text feedback (in Dutch and English) for educational institutions. It ensures privacy-sensitive information is removed from datasets before they are used for further analysis, without ever sending data to the cloud.
+A robust, 100% offline, **triple-layer** anonymization tool designed to process open-text feedback (in Dutch and English). It ensures privacy-sensitive information is removed from datasets using a combination of fast regex, specialized transformer models, and a Large Language Model.
 
 ---
 
 ## 🏗️ Architecture & Tools Used
 
-To balance **speed, deterministic accuracy, and contextual understanding**, this tool uses a dual-layer approach. It combines a fast, rule-based NLP tool with a smart, contextual Large Language Model.
+To balance **speed, deterministic accuracy, and contextual understanding**, this tool uses a triple-layer pipeline.
 
 ### Layer 1: Microsoft Presidio (Deterministic NER & Regex)
-**What it is:** An open-source data protection tool by Microsoft.
-**What it does:** It scans text using Named Entity Recognition (NER) and Custom Regular Expressions to instantly find and replace structured data.
-**It filters:** 
-- Personal Names
-- Locations (Cities, Campuses)
-- Emails and Phone Numbers
-- Fontys Student Numbers (Custom Regex mapping)
+**What it is:** A fast, rule-based data protection engine.
+**What it does:** It provides a first "coarse-grained" pass to instantly remove the most sensitive and structured data.
+**It targets:** 
+- **Identity:** Full names and surnames.
+- **Contact:** Email addresses and Phone numbers.
+- **Organization:** Fontys-specific Student Numbers (via custom regex) and employee numbers.
+- **Locations:** Large geographic entities (Cities, Campuses).
 
-### Layer 2: Ollama LLM (Contextual Understanding)
-**What it is:** A local engine running the `llama3.1:8b` Large Language Model.
-**What it does:** It reads the text surrounding the words (the context) to find indirect identification that strict rules might miss.
-**It filters:**
-- Educational Courses or Departments
-- Honorifics/Titles (e.g., "Meneer", "Prof.")
-- Physical Descriptions (e.g., "blonde haren", "rode schoenen")
+### Layer 2: EU-PII-Safeguard (Specialized Transformer)
+**What it is:** A specialized small transformer model (`tabularisai/eu-pii-safeguard`).
+**What it does:** It acts as a safety net for standard named entities that regex might miss due to complex formatting or spelling variations.
+**It targets:**
+- **Named Entities:** Missed names and location mentions.
+- **Structured PII:** Secondary validation for IDs and contact details.
+
+### Layer 3: Ollama LLM (Contextual Understanding)
+**What it is:** A local Large Language Model (default: `aya-expanse:8b`).
+**What it does:** It performs a "fine-grained" contextual analysis to identify indirect PII—information that isn't a "name" but can still uniquely identify someone.
+**It targets:**
+- **Honorifics & Titles:** "Meneer de Vries", "Docent Janssen", "Prof. Davis".
+- **Physical Descriptors:** Appearance, clothing, or unique physical traits (e.g., "rode jas", "kaal", "grote schoenen").
+- **Institutional Context:** Specific courses, department names, or unique project groups.
+- **Indirect IDs:** Mentions of specific schedules or unique personal situations.
 
 ### How it Works (Flowchart)
 
 ```mermaid
 graph TD
-    A[User Uploads CSV via Web UI] --> B{Layer 1: Microsoft Presidio}
-    B -->|Regex & NER| C[Replaces: Names, Emails, Locations, Student Nrs]
-    C --> D{Layer 2: Local LLM llama3.1:8b}
-    D -->|Contextual Analysis| E[Replaces: Physical Details, Courses, Titles]
-    E -->|Safety Check| F{Length & Refusal Check}
-    F -->|Success| G[Anonymized Row]
-    F -->|Fails Check| H[Retry LLM]
-    H -->|Fails Again| I[Flag for Human Review]
-    G --> J[User Downloads Safe CSV]
-    I --> J
+    A[User Uploads CSV] --> B{Layer 1: Presidio}
+    B --> C{Layer 2: EU-PII-Safeguard}
+    C --> D{Layer 3: Local LLM}
+    D -->|Safety Check| E[Anonymized Row]
+    E --> F[User Downloads Safe CSV]
+    D -->|Fails| G[Flag for Human Review]
+    G --> F
 ```
 
 ---
@@ -48,14 +53,23 @@ graph TD
 This project is fully containerized using Docker. You do not need to install Python, pip dependencies, or configure your local environment manually.
 
 ### Prerequisites
-1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/).
-2. Allocate sufficient memory to Docker. The `llama3.1:8b` model requires at least **8GB - 12GB of RAM** to run smoothly.
+1.  Install [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+2.  **Hardware**: NVIDIA GPU (recommended) for Layer 3. The `aya-expanse:8b` model uses ~5.2GB of VRAM.
+3.  **Memory**: Allocate at least **8GB - 12GB of RAM** to Docker.
+
+### Configuration (.env)
+We use a central environment file to manage the AI model.
+1. Check/create the `.env` file in the root folder.
+2. Set your desired model:
+   ```env
+   OLLAMA_MODEL=aya-expanse:8b
+   ```
 
 ### Starting the Project
 1. Open your terminal or Command Prompt.
 2. Navigate to the `privacy_officer` folder:
    ```bash
-   cd c:\fontys\semester_4\group\agents\privacy_officer
+   cd path/to/privacy_officer
    ```
 3. Run the Docker Compose command:
    ```bash
@@ -63,10 +77,10 @@ This project is fully containerized using Docker. You do not need to install Pyt
    ```
 
 **What happens during startup?**
-- Docker builds the FastAPI web server (`privacy-agent`).
-- Docker starts the `ollama` container.
-- An entrypoint script (`ollama_entrypoint.sh`) runs inside the Ollama container, automatically pulling and installing the `llama3.1:8b` model (this takes a few minutes the first time).
-- Once the model is loaded, the FastAPI server becomes available.
+- **Docker builds the FastAPI server**: It installs all dependencies from [requirements.txt](requirements.txt). **Note**: The first build can take 5-10 minutes because it downloads heavy AI libraries like Spacy and Transformers.
+- **Docker starts Ollama**: It initializes the local LLM engine.
+- **Model Download**: An entrypoint script automatically pulls the model specified in your `.env` (e.g., `aya-expanse:8b`). This is a one-time download of several gigabytes.
+- **Ready**: Once the model is loaded, the web UI becomes available at `http://localhost:8000`.
 
 ---
 
@@ -75,8 +89,8 @@ This project is fully containerized using Docker. You do not need to install Pyt
 We have built a user-friendly interface to process data without touching code.
 
 1.  **Open the App**: Once Docker is running, go to `http://localhost:8000` in your web browser.
-2.  **Upload**: Drag and drop your `.csv` file.
-3.  **Specify Column**: Enter the exact name of the column containing the text you want to anonymize (e.g., `feedback_text` or `OpenReactie`).
+2.  **Upload**: Drag and drop your `.csv` file. Supports both **UTF-8** and **Latin-1** (Western European) encoding.
+3.  **Specify Column**: Enter the exact name of the column containing the text you want to anonymize.
 4.  **Configure Settings**: 
     - You will see a grid of checkboxes (Names, Locations, Titles, Courses, Physical Details, Student Numbers).
     - By default, everything is anonymized.

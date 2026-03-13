@@ -1,4 +1,6 @@
 import os
+import re
+import json
 import ollama
 import pandas as pd
 from tqdm import tqdm
@@ -10,6 +12,7 @@ from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
 from langdetect import detect
 from langdetect.lang_detect_exception import LangDetectException
+from transformers import pipeline as hf_pipeline
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -41,6 +44,82 @@ analyzer.registry.add_recognizer(student_recognizer_en)
 
 anonymizer = AnonymizerEngine()
 
+# Initialize eu-pii-safeguard (tabularisai/eu-pii-safeguard)
+# Downloads ~1.1GB on first run, cached afterwards.
+logging.info("Loading tabularisai/eu-pii-safeguard model (downloads on first run)...")
+try:
+    eu_pii_ner = hf_pipeline(
+        "token-classification",
+        model="tabularisai/eu-pii-safeguard",
+        aggregation_strategy="simple",
+        device=-1,  # CPU; set to 0 for GPU
+    )
+    logging.info("eu-pii-safeguard loaded successfully.")
+except Exception as e:
+    eu_pii_ner = None
+    logging.warning(f"eu-pii-safeguard failed to load: {e}. Layer 2 will be skipped.")
+
+# Map eu-pii-safeguard entity_group labels to replacement tags.
+# Uses keyword matching so it stays robust against exact label name variants.
+def _eu_pii_tag(entity_group: str) -> str:
+    label = entity_group.upper()
+    if any(k in label for k in ("NAME", "PERSON", "FIRSTNAME", "LASTNAME", "SURNAME", "GIVENNAME")):
+        return "[NAME]"
+    if any(k in label for k in ("CITY", "ADDRESS", "STREET", "LOCATION", "ZIPCODE", "POSTAL", "STATE", "COUNTRY", "REGION")):
+        return "[LOCATION]"
+    # Everything else (email, phone, IBAN, credit card, SSN, passport, tax ID,
+    # username, IP, medical condition, age, gender, ethnicity, etc.) → [PII]
+    return "[PII]"
+
+
+def eu_pii_safeguard_anonymize(text: str, config: dict = None) -> str:
+    """Layer 2: run tabularisai/eu-pii-safeguard over text already cleaned by Presidio."""
+    if eu_pii_ner is None or not text.strip():
+        return text
+
+    try:
+        entities = eu_pii_ner(text)
+    except Exception as e:
+        logging.error(f"eu-pii-safeguard error: {e}")
+        return text
+
+    if not entities:
+        return text
+
+    # Sort longest span first to avoid partial-match clobbering
+    entities_sorted = sorted(entities, key=lambda e: e["end"] - e["start"], reverse=True)
+
+    result = text
+    replaced = []
+    for ent in entities_sorted:
+        span = text[ent["start"]:ent["end"]]
+        if not span.strip():
+            continue
+
+        label = ent["entity_group"]
+        tag = _eu_pii_tag(label)
+
+        # Respect config flags
+        if config:
+            if tag == "[NAME]" and not config.get("names", True):
+                continue
+            if tag == "[LOCATION]" and not config.get("locations", True):
+                continue
+            if tag == "[PII]" and not config.get("pii", True):
+                continue
+
+        pattern = re.compile(re.escape(span), re.IGNORECASE)
+        new_result = pattern.sub(tag, result)
+        if new_result != result:
+            replaced.append(f"'{span}' ({label} → {tag})")
+            result = new_result
+
+    if replaced:
+        logging.info(f"eu-pii-safeguard caught {len(replaced)} additional entities: {', '.join(replaced)}")
+
+    return result
+
+
 PRESIDIO_OPERATORS = {
     "PERSON":        OperatorConfig("replace", {"new_value": "[NAME]"}),
     "EMAIL_ADDRESS": OperatorConfig("replace", {"new_value": "[PII]"}),
@@ -51,35 +130,6 @@ PRESIDIO_OPERATORS = {
     "DEFAULT":       OperatorConfig("keep"), # We ignore other things that Presidio finds
 }
 
-def presidio_anonymize(text: str, config: dict = None) -> str:
-    """Uses Microsoft Presidio NER to securely extract structured PII before sending context to LLM."""
-    if not text.strip(): return text
-    
-    # Try to detect language, default to Dutch since data is mostly Dutch
-    try:
-        lang = detect(text)
-        if lang not in ["nl", "en"]:
-            lang = "nl"
-    except LangDetectException:
-        lang = "nl"
-        
-    # Dynamically build operators based on config
-    operators = {}
-    if config:
-        operators["PERSON"] = OperatorConfig("replace", {"new_value": "[NAME]"}) if config.get("names", True) else OperatorConfig("keep")
-        operators["NRP"] = OperatorConfig("replace", {"new_value": "[NAME]"}) if config.get("names", True) else OperatorConfig("keep")
-        operators["LOCATION"] = OperatorConfig("replace", {"new_value": "[LOCATION]"}) if config.get("locations", True) else OperatorConfig("keep")
-        operators["EMAIL_ADDRESS"] = OperatorConfig("replace", {"new_value": "[PII]"}) if config.get("pii", True) else OperatorConfig("keep")
-        operators["PHONE_NUMBER"] = OperatorConfig("replace", {"new_value": "[PII]"}) if config.get("pii", True) else OperatorConfig("keep")
-        operators["STUDENT_NUMBER"] = OperatorConfig("replace", {"new_value": "[PII]"}) if config.get("student_nr", True) else OperatorConfig("keep")
-    else:
-        operators = PRESIDIO_OPERATORS
-        
-    operators["DEFAULT"] = OperatorConfig("keep")
-        
-    results = analyzer.analyze(text=text, language=lang)
-    result = anonymizer.anonymize(text=text, analyzer_results=results, operators=operators)
-    return result.text
 
 def get_dynamic_prompt(config: dict = None) -> str:
     """Builds a strict JSON extraction prompt based on user settings."""
@@ -112,7 +162,7 @@ If no matches are found for a category, return an empty array [] for that key.
 """
     return prompt
 
-def anonymize_text(text: str, model_name: str = 'llama3.2:latest', config: dict = None) -> str:
+def anonymize_text(text: str, model_name: str = 'aya-expanse:8b', config: dict = None) -> str:
     """Anonymize a single text string using Presidio and local LLM."""
     if not isinstance(text, str) or not text.strip():
         return text
@@ -149,10 +199,12 @@ def anonymize_text(text: str, model_name: str = 'llama3.2:latest', config: dict 
             operators=operators
         )
         presidio_anonymized = anonymized_result.text
-        
+
         if results:
-            logging.info(f"Presidio matched {len(results)} entities -> Output: '{presidio_anonymized}'")
-            
+            entities_desc = [f"'{text[r.start:r.end]}' ({r.entity_type})" for r in results]
+            logging.info(f"Presidio caught {len(results)} entities: {', '.join(entities_desc)}")
+            logging.info(f"Presidio output: '{presidio_anonymized}'")
+
     except Exception as e:
         logging.error(f"Presidio error on '{text[:30]}...': {e}")
         presidio_anonymized = text
@@ -161,14 +213,16 @@ def anonymize_text(text: str, model_name: str = 'llama3.2:latest', config: dict 
     if config and not any(config.values()):
         return text
 
+    # Step 2: eu-pii-safeguard — catches named entities Presidio missed
+    eu_pii_anonymized = eu_pii_safeguard_anonymize(presidio_anonymized, config)
+
     try:
         prompt_str = get_dynamic_prompt(config)
-        import json
-        import re
-        
+
+        # Step 3: LLM — catches indirect/contextual PII that NER layers missed
         response = client.chat(model=model_name, messages=[
             {"role": "system", "content": prompt_str},
-            {"role": "user", "content": presidio_anonymized}
+            {"role": "user", "content": eu_pii_anonymized}
         ], format="json")
         
         # safely parse the json response
@@ -178,8 +232,8 @@ def anonymize_text(text: str, model_name: str = 'llama3.2:latest', config: dict 
             logging.error(f"Failed to parse JSON for input: {text[:30]}")
             return f"[NEEDS_REVIEW_ERROR] {text}"
             
-        anonymized = presidio_anonymized
-        
+        anonymized = eu_pii_anonymized
+
         # We sort by length descending to replace larger phrases before smaller overlaps
         tag_map = {
             "names": "[NAME]",
@@ -190,6 +244,7 @@ def anonymize_text(text: str, model_name: str = 'llama3.2:latest', config: dict 
             "physical": "[PHYSICAL_DESCRIPTOR]"
         }
         
+        llm_replaced = []
         for category, entities in extracted_entities.items():
             if isinstance(entities, list) and category in tag_map:
                 tag = tag_map[category]
@@ -199,15 +254,21 @@ def anonymize_text(text: str, model_name: str = 'llama3.2:latest', config: dict 
                     if isinstance(entity, str) and entity and entity in anonymized:
                         # Case insensitive replacement via regex but preserving case of other words
                         pattern = re.compile(re.escape(entity), re.IGNORECASE)
-                        anonymized = pattern.sub(tag, anonymized)
-                        
+                        new_anonymized = pattern.sub(tag, anonymized)
+                        if new_anonymized != anonymized:
+                            llm_replaced.append(f"'{entity}' ({category} → {tag})")
+                            anonymized = new_anonymized
+                            
+        if llm_replaced:
+            logging.info(f"LLM caught {len(llm_replaced)} additional entities: {', '.join(llm_replaced)}")
+            
         return anonymized
 
     except Exception as e:
         logging.error(f"LLM error on '{text[:30]}...': {e}")
         return f"[NEEDS_REVIEW_ERROR] {text}"
 
-def process_dataframe(df: pd.DataFrame, text_column: str, model_name: str = 'llama3.2:latest', config: dict = None, progress_state: dict = None) -> pd.DataFrame:
+def process_dataframe(df: pd.DataFrame, text_column: str, model_name: str = 'aya-expanse:8b', config: dict = None, progress_state: dict = None) -> pd.DataFrame:
     """
     Processes a Pandas DataFrame, applying the anonymization function to the specified text column
     with a progress bar. Safe to run locally with no cloud connections.

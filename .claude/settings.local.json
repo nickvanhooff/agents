@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch"
+      "WebSearch",
+      "Bash(cd \"/c/fontys/semester_4/group/agents\" && source venv/Scripts/activate && pip install transformers torch --quiet 2>&1 | tail -5)",
+      "Bash(cd \"/c/fontys/semester_4/group/agents\" && source venv/Scripts/activate && python -c \"\nfrom transformers import pipeline as hf_pipeline\nprint\\('transformers imported OK'\\)\np = hf_pipeline\\('token-classification', model='tabularisai/eu-pii-safeguard', aggregation_strategy='simple', device=-1\\)\nprint\\('model loaded OK'\\)\nresult = p\\('Jan Pieters woont in Eindhoven en zijn email is jan@test.nl'\\)\nprint\\('test result:', result\\)\n\" 2>&1)",
+      "Bash(cd \"/c/fontys/semester_4/group/agents\" && source venv/Scripts/activate && pip install transformers torch 2>&1 | tail -10)",
+      "Bash(cd \"/c/fontys/semester_4/group/agents\" && source venv/Scripts/activate && python -c \"import torch; print\\('torch', torch.__version__\\)\" 2>&1)",
+      "Bash(cd \"/c/fontys/semester_4/group/agents\" && source venv/Scripts/activate && python -c \"\nfrom transformers import pipeline as hf_pipeline\nprint\\('Loading model...'\\)\np = hf_pipeline\\('token-classification', model='tabularisai/eu-pii-safeguard', aggregation_strategy='simple', device=-1\\)\nprint\\('Model loaded.'\\)\nresult = p\\('Jan Pieters woont in Eindhoven en zijn email is jan@test.nl'\\)\nprint\\('Result:', result\\)\n\" 2>&1)"
     ]
   }
 }
