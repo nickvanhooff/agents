@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A multi-agent monorepo for Fontys (Dutch university). Currently contains one agent: the **Privacy Officer**, which anonymizes student feedback data using a dual-layer approach (Microsoft Presidio + local Ollama LLM). All processing is 100% offline — data never leaves the local system.
+A multi-agent monorepo for Fontys (Dutch university). Currently contains one agent: the **Privacy Officer**, which anonymizes student feedback data using a **triple-layer** approach (Microsoft Presidio + EU-PII-Safeguard transformer + local Ollama LLM). All processing is 100% offline — data never leaves the local system.
 
 ## Running the Privacy Officer
 
@@ -17,7 +17,7 @@ docker-compose up --build
 
 - Web UI: http://localhost:8000
 - Ollama API: http://localhost:11435 (mapped from 11434 internally)
-- On first run, `llama3.1:8b` (~5GB) is pulled automatically — this takes several minutes.
+- On first run, `aya-expanse:8b` (~5GB) is pulled automatically — this takes several minutes.
 - Requires Docker Desktop with 8–12GB RAM allocated.
 
 ## Development (without Docker)
@@ -52,19 +52,21 @@ privacy_officer/
     └── create_dummy_data.py    # Generates test CSV (student_feedback.csv)
 ```
 
-### Two-Layer Anonymization Pipeline (`src/core/privacy_agent.py`)
+### Triple-Layer Anonymization Pipeline (`src/core/privacy_agent.py`)
 
-1. **Presidio layer**: Deterministic NER + regex. Detects PERSON, EMAIL_ADDRESS, PHONE_NUMBER, LOCATION, STUDENT_NUMBER (5–7 digit custom recognizer), NRP. Auto-detects Dutch/English; falls back to Dutch. Replaces with `[NAME]`, `[LOCATION]`, `[PII]`, etc.
-   - `presidio_anonymize()` — standalone utility function
-   - `anonymize_text()` — the main pipeline function; it **inlines its own Presidio logic** (does not call `presidio_anonymize()`), then calls Ollama
+1. **Layer 1 – Presidio**: Deterministic NER + regex. Detects PERSON, EMAIL_ADDRESS, PHONE_NUMBER, LOCATION, STUDENT_NUMBER (5–7 digit custom recognizer), NRP. Auto-detects Dutch/English; falls back to Dutch. Replaces with `[NAME]`, `[LOCATION]`, `[PII]`, etc.
 
-2. **Ollama LLM layer** (inside `anonymize_text()`): Sends Presidio-anonymized text with a JSON extraction prompt via `get_dynamic_prompt()`. Identifies contextual PII (names, titles, locations, courses, physical descriptors) Presidio missed. Categories toggled by user config. Sorts extracted entities by length descending before replacement to avoid partial-match clobbering.
+2. **Layer 2 – EU-PII-Safeguard**: Transformer model (`tabularisai/eu-pii-safeguard`). Catches named entities Presidio missed (complex formatting, spelling variations). Runs in-process via Hugging Face transformers.
 
-3. **Safety checks**: On JSON parse failure or LLM exception, appends `[NEEDS_REVIEW_ERROR]` and returns the original text for human review.
+3. **Layer 3 – Ollama LLM** (inside `anonymize_text()`): Sends Layer-2 output with a JSON extraction prompt via `get_dynamic_prompt()`. Identifies contextual PII (names, titles, locations, courses, physical descriptors). Categories toggled by user config. Sorts extracted entities by length descending before replacement.
+
+4. **Layer selection**: Users can enable/disable layers via checkboxes in the UI. Empty selection = all layers. Passed as `layers` parameter to `process_dataframe` and `anonymize_text`.
+
+5. **Safety checks**: On JSON parse failure or LLM exception, appends `[NEEDS_REVIEW_ERROR]` and returns the original text for human review.
 
 ### Web API (`src/api/app.py`)
 
-- `POST /api/anonymize` — accepts multipart form: CSV file + boolean flags per PII category + `text_column` name. Runs anonymization **synchronously** in the request handler (blocks until complete); progress tracked in a global in-memory dict (single-user only).
+- `POST /api/anonymize` — accepts multipart form: CSV file + `text_column` + layer checkboxes (1–3) + boolean flags per PII category. Runs anonymization **synchronously**; progress tracked in a global in-memory dict (single-user only).
 - `GET /api/progress` — Server-Sent Events stream polling `progress_state` every 0.5s.
 - `GET /api/download/{filename}` — download the anonymized CSV from `uploads/`.
 
@@ -73,7 +75,7 @@ privacy_officer/
 | Variable | Default | Description |
 |---|---|---|
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama service URL |
-| `OLLAMA_MODEL` | `llama3.2:latest` (local) / `llama3.1:8b` (Docker) | LLM model to use |
+| `OLLAMA_MODEL` | `aya-expanse:8b` | LLM model to use |
 | `INPUT_FILE` | `data/input.csv` | CLI: input CSV path |
 | `OUTPUT_FILE` | `data/output.csv` | CLI: output CSV path |
 | `TEXT_COLUMN` | `feedback_text` | Column to anonymize |

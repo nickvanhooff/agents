@@ -91,7 +91,7 @@ We have built a user-friendly interface to process data without touching code.
 1.  **Open the App**: Once Docker is running, go to `http://localhost:8000` in your web browser.
 2.  **Upload**: Drag and drop your `.csv` file. Supports both **UTF-8** and **Latin-1** (Western European) encoding.
 3.  **Specify Column**: Enter the exact name of the column containing the text you want to anonymize.
-4.  **Choose Layers**: Use the multi-select to pick which anonymization layers run (Layer 1: Presidio, Layer 2: EU-PII-Safeguard, Layer 3: LLM). Hold Ctrl (Windows) or Cmd (Mac) to select multiple. If none are selected, all layers run by default. Examples: Layer 1 only for fast regex-only anonymization; Layers 1+3 to skip the transformer; all three for full anonymization.
+4.  **Choose Layers**: Use the checkboxes to enable or disable each anonymization layer (Layer 1: Presidio, Layer 2: EU-PII-Safeguard, Layer 3: LLM). All three are checked by default. Uncheck layers to exclude them (e.g. Layer 1 only for fast regex-only anonymization; Layers 1+3 to skip the transformer). If all are unchecked, all layers run.
 5.  **Configure Settings**: 
     - You will see a grid of checkboxes (Names, Locations, Titles, Courses, Physical Details, Student Numbers).
     - By default, everything is anonymized.

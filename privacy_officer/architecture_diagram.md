@@ -12,35 +12,41 @@ sequenceDiagram
         participant UI as Web Interface (HTML/JS)
         participant API as FastAPI Backend (app.py)
         participant Core as Privacy Agent (privacy_agent.py)
-        participant Ollama as Ollama Service (Llama 3.2 Engine)
+        participant Presidio as Layer 1: Presidio
+        participant EUPII as Layer 2: EU-PII-Safeguard
+        participant Ollama as Layer 3: Ollama (aya-expanse:8b)
     end
     
     note over Gebruiker, Ollama: Volledig offline, geen cloud of internet verbinding
 
-    Gebruiker->>UI: Uploadt raw CSV bestand (bijv. fontys_nse.csv)
-    Gebruiker->>UI: Vul kolomnaam in (bijv. 'OpenReactie')
+    Gebruiker->>UI: Uploadt raw CSV, kiest kolom, lagen en entiteit-types
     UI->>API: HTTP POST /api/anonymize (Multipart Form Data)
     
     activate API
     API->>API: Slaat .csv lokaal op in /uploads/raw_*.csv
-    API->>Core: process_dataframe(df, kolom='OpenReactie')
+    API->>Core: process_dataframe(df, text_column, config, layers)
     
     activate Core
-    loop Elke zin in de gekozen kolom
-        Core->>Ollama: HTTP POST /api/chat (Systeemprompt + Zin)
+    loop Elke rij in de gekozen kolom
+        Core->>Presidio: Layer 1: NER + regex (PERSON, EMAIL, LOCATION, STUDENT_NUMBER)
+        Presidio-->>Core: Tekst met [NAME], [PII], [LOCATION] tags
+        
+        Core->>EUPII: Layer 2: Transformer (tabularisai/eu-pii-safeguard)
+        EUPII-->>Core: Extra entiteiten gemaskeerd
+        
+        Core->>Ollama: Layer 3: JSON-extractie prompt (contextuele PII)
         activate Ollama
-        note right of Ollama: Leest zin, zoekt PII <br>en past [TAGS] toe
-        Ollama-->>Core: Retourneert geanonimiseerde tekst
+        Ollama-->>Core: JSON met namen, titels, cursussen, fysieke beschrijvingen
         deactivate Ollama
         
-        Core->>Core: Valideert output (Lengte check & Leeg check)
+        Core->>Core: Vervangt entiteiten, valideert output
     end
     
-    Core-->>API: Retourneert nieuwe, veilige Pandas DataFrame
+    Core-->>API: Retourneert veilige Pandas DataFrame
     deactivate Core
     
     API->>API: Slaat veilige DataFrame op als /uploads/safe_*.csv
-    API-->>UI: JSON { success: true, download_url: /api/... }
+    API-->>UI: JSON { success, download_url, flagged_count }
     deactivate API
     
     UI-->>Gebruiker: Toont succesmelding en download link
@@ -50,10 +56,10 @@ sequenceDiagram
 ```
 
 ### 🧩 Componenten Uitleg:
-1. **Web Interface (HTML/JS)**: De gebruiksvriendelijke "voorkant" die in de browser van de gebruiker draait (maar wel lokaal gehost wordt).
-2. **FastAPI Backend ([app.py](file:///c:/fontys/semester_4/group/agents/src/api/app.py))**: De beveiliger en logistiek manager. Het ontvangt het bestand, roept de Python logica aan, en regelt de downloads.
-3. **Privacy Agent ([privacy_agent.py](file:///c:/fontys/semester_4/group/agents/privacy_agent.py))**: De "hersenen" van ons Python script. Hier zit de strenge System Prompt en de beveiliging in gebouwd (het checken op fouten).
-4. **Ollama Service**: De daadwerkelijke AI (Llama 3.2). Luistert lokaal op poort `11434` en voert het zware taalbegrip uit. Omdat het **niet** in de cloud draait, lekt er geen data.
+1. **Web Interface (HTML/JS)**: De gebruiksvriendelijke "voorkant" die in de browser draait. Bevat checkboxes voor lagen (1–3) en entiteit-types (namen, locaties, PII, titels, etc.).
+2. **FastAPI Backend** ([privacy_officer/src/api/app.py](privacy_officer/src/api/app.py)): Ontvangt het bestand, valideert layer-selectie, roept de core aan, en regelt downloads. Biedt SSE voor real-time voortgang.
+3. **Privacy Agent** ([privacy_officer/src/core/privacy_agent.py](privacy_officer/src/core/privacy_agent.py)): Triple-layer pipeline. Layer 1: Presidio (regex/NER). Layer 2: EU-PII-Safeguard (transformer). Layer 3: Ollama LLM (contextueel). Lagen zijn selecteerbaar via de UI.
+4. **Ollama Service**: Lokaal AI-model (standaard `aya-expanse:8b`). Luistert op poort `11434`. Omdat het **niet** in de cloud draait, lekt er geen data.
 
 
 ---
@@ -66,23 +72,23 @@ Dit is een Niveau 2 (Container) C4-diagram dat perfect aantoont hoe de systemen 
 C4Container
     title Container diagram voor het Fontys Privacy Officer Systeem
 
-    Person(medewerker, "Fontys Kwaliteitsmedewerker", "Uploadt NSE data en downloadt geanonimiseerde resultaten.")
+    Person(medewerker, "Fontys Kwaliteitsmedewerker", "Uploadt NSE data, kiest lagen en entiteit-types, downloadt geanonimiseerde resultaten.")
 
     System_Boundary(c1, "Privacy Officer Agent (Lokale Omgeving)") {
-        Container(spa, "Web Interface", "HTML, CSS, JavaScript", "Biedt de gebruikersinterface voor de medewerker om bestanden te uploaden.")
-        Container(api, "Privacy API App", "Python, FastAPI", "Verwerkt bestandsuploads, orkestreert het proces via Pandas, en garandeert veilige I/O operaties lokaal.")
-        Container(agent, "Core Privacy Logic", "Python, Pandas", "Leest het CSV bestand regel voor regel en communiceert met het lokale LLM cluster.")
-        Container(llm, "Ollama Service", "Ollama (Llama 3.2)", "Het lokaal draaiende AI taalmodel dat offline entiteiten herkent en maskeert via de System Prompt.")
+        Container(spa, "Web Interface", "HTML, CSS, JavaScript", "Upload, kolomnaam, layer-checkboxes (1–3), entiteit-types.")
+        Container(api, "Privacy API App", "Python, FastAPI", "Verwerkt uploads, valideert layers, orkestreert pipeline, SSE voortgang, downloads.")
+        Container(agent, "Core Privacy Logic", "Python, Presidio, Transformers, Pandas", "Triple-layer pipeline: (1) Presidio NER+regex, (2) EU-PII-Safeguard transformer, (3) Ollama LLM. Lagen selecteerbaar.")
+        Container(llm, "Ollama Service", "Ollama (aya-expanse:8b)", "Layer 3: Lokaal LLM voor contextuele PII-extractie.")
         
-        ContainerDb(fs, "Local File System", "Uploads Map", "Slaat tijdelijk de ruwe en geanonimiseerde CSV bestanden op de host-machine op.")
+        ContainerDb(fs, "Local File System", "Uploads Map", "raw_*.csv en safe_*.csv")
     }
 
     Rel(medewerker, spa, "Bezoekt", "Webbrowser (http://localhost:8000)")
-    Rel(spa, api, "Maakt API calls", "JSON/HTTP POST")
+    Rel(spa, api, "Maakt API calls", "Multipart Form + SSE")
     Rel(api, fs, "Slaat op / Leest", "Lokale Bestands-I/O")
-    Rel(api, agent, "Roept aan", "Interne Functie (process_dataframe)")
-    Rel(agent, llm, "Vraagt anonimisering aan", "HTTP POST (localhost:11434)")
-    Rel(llm, agent, "Retourneert string data", "JSON")
+    Rel(api, agent, "Roept aan", "process_dataframe(df, text_column, config, layers)")
+    Rel(agent, llm, "Layer 3: JSON-extractie", "HTTP POST (localhost:11434)")
+    Rel(llm, agent, "Retourneert JSON", "Extracted entities")
 ```
 
 ---
@@ -95,34 +101,32 @@ Dit is een Niveau 3 (Component) C4-diagram dat inzoomt in de "Privacy API App" e
 C4Component
     title Component diagram voor de Privacy Officer API en Core Logic
 
-    Container(spa, "Web Interface", "HTML/JS", "Biedt de gebruikersinterface.")
+    Container(spa, "Web Interface", "HTML/JS", "Upload, kolomnaam, layer-checkboxes (1–3), entiteit-types.")
     Container(fs, "Local File System", "Uploads Map", "/uploads/")
-    Container(llm, "Ollama Service", "Ollama", "Lokaal AI model")
+    Container(llm, "Ollama Service", "aya-expanse:8b", "Layer 3: contextuele PII-extractie")
 
     Container_Boundary(api, "Privacy API App (app.py)") {
         Component(router_ui, "UI Router", "FastAPI Route", "Serveert index.html op '/'")
-        Component(router_api, "API Router", "FastAPI Route", "Ontvangt uploads op '/api/anonymize' en regelt downloads op '/api/download'")
-        Component(file_handler, "File Handler", "Python File I/O", "Slaat uploads op en leest CSV data.")
+        Component(router_api, "API Router", "FastAPI Route", "POST /api/anonymize, GET /api/progress (SSE), GET /api/download")
+        Component(file_handler, "File Handler", "Python File I/O", "Slaat raw_*.csv op, leest CSV, schrijft safe_*.csv.")
     }
 
     Container_Boundary(core, "Core Privacy Logic (privacy_agent.py)") {
-        Component(df_processor, "DataFrame Processor", "Pandas", "Beheert in-memory dataraster en the voortgangs-loop (progress bar).")
-        Component(anonymizer, "Text Anonymizer", "Python Functie", "Past beveiligingschecks en LLM prompt toe per tekst-alinea.")
-        Component(ollama_client, "Ollama Client", "Ollama Python Lib", "Verstuurt HTTP integratie aanroepen naar backend LLM.")
+        Component(df_processor, "DataFrame Processor", "Pandas", "Voortgangs-loop, roept anonymize_text per rij aan.")
+        Component(anonymize_text, "anonymize_text", "Python", "L1: Presidio (in-process). L2: EU-PII-Safeguard (in-process). L3: Ollama (HTTP). Respecteert layers.")
+        Component(ollama_client, "Ollama Client", "ollama Python Lib", "Verstuurt JSON-extractie prompt naar LLM.")
     }
 
     Rel(spa, router_ui, "Haalt webpagina op", "GET /")
-    Rel(spa, router_api, "Stuurt form-data CSV & vraagt download", "POST /api/anonymize", "GET /api/download")
+    Rel(spa, router_api, "Form-data + SSE", "POST /api/anonymize")
     
     Rel(router_api, file_handler, "Delegeert bestandsopslag")
-    Rel(file_handler, fs, "Schrijft/Leest raw_*.csv bestanden")
+    Rel(file_handler, fs, "Schrijft/Leest raw_*.csv, safe_*.csv")
     
-    Rel(router_api, df_processor, "Roept process_dataframe() aan met filepath")
-    Rel(df_processor, anonymizer, "Stuurt text per DataFrame rij")
-    Rel(anonymizer, ollama_client, "Parse text en voegt SYSTEM PROMPT toe")
+    Rel(router_api, df_processor, "process_dataframe(df, text_column, config, layers)")
+    Rel(df_processor, anonymize_text, "Stuurt text per rij")
+    Rel(anonymize_text, ollama_client, "Layer 3", "get_dynamic_prompt + chat")
     
-    Rel(ollama_client, llm, "Stuurt prompt", "Local API (11434)")
-    Rel(llm, ollama_client, "Geeft schone text terug")
-    
-    Rel(df_processor, fs, "Slaat veilige dataframe op als safe_*.csv")
+    Rel(ollama_client, llm, "Stuurt prompt", "localhost:11434")
+    Rel(llm, ollama_client, "JSON met entiteiten")
 ```
