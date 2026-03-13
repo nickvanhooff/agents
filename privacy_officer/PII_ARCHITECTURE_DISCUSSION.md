@@ -2,8 +2,8 @@
 
 ## Context
 
-The Privacy Officer agent anonymizes Dutch student feedback using a dual-layer pipeline:
-Presidio (NER + regex) → LLM (llama3.2 via Ollama)
+The Privacy Officer agent anonymizes Dutch student feedback using a **triple-layer** pipeline:
+Presidio (NER + regex) → EU-PII-Safeguard (Specialized Transformer) → LLM (aya-expanse:8b via Ollama)
 
 This document captures a technical discussion about improving that architecture, with the goal of replacing the LLM with something faster, more deterministic, and with less hallucination risk.
 
@@ -127,9 +127,9 @@ Automated tools handle obvious PII; a human reviewer handles ambiguous cases.
 
 ### Option details
 
-#### `llama3.2:3b` — current default, smallest Ollama option
-- Drop-in, already works, just change `OLLAMA_MODEL=llama3.2:3b`
-- 3B params: ~2GB RAM, ~3× faster than 8b
+#### `aya-expanse:8b` — new default, multilingual Ollama option
+- Drop-in, works via `.env` configuration.
+- 8B params: ~5.2B RAM in GPU, excelente Dutch performance.
 - Dutch: reasonable but not specifically trained on Dutch PII
 - Hallucination risk: will sometimes identify things not in the text (mitigated by the `entity in text` guard already in the code)
 
