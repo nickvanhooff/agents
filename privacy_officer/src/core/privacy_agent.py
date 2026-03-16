@@ -36,13 +36,131 @@ provider = NlpEngineProvider(nlp_configuration={
 nlp_engine = provider.create_engine()
 analyzer = AnalyzerEngine(nlp_engine=nlp_engine, supported_languages=["nl", "en"])
 
-# Add Custom Recognizer for Student Numbers (5 to 7 digits)
-student_pattern = Pattern(name="student_number_pattern", regex=r'\b[0-9]{5,7}\b', score=0.85)
-student_recognizer_nl = PatternRecognizer(supported_entity="STUDENT_NUMBER", patterns=[student_pattern], supported_language="nl")
-student_recognizer_en = PatternRecognizer(supported_entity="STUDENT_NUMBER", patterns=[student_pattern], supported_language="en")
-analyzer.registry.add_recognizer(student_recognizer_nl)
-analyzer.registry.add_recognizer(student_recognizer_en)
+# -----------------------------------------------------------------------------
+# PRESIDIO PATTERN DEFINITIONS (Layer 1 - Regex/NER)
+# -----------------------------------------------------------------------------
+# Central config for custom regex recognizers. Each entry: name, regex, score,
+# entity type, optional context words (boost confidence when nearby).
+# Score: 0.0-1.0; higher = more confident. Use 0.75-0.9 for generic patterns
+# to avoid false positives while still catching real PII.
+# -----------------------------------------------------------------------------
 
+PRESIDIO_PATTERN_DEFINITIONS = [
+    # STUDENT_NUMBER: Fontys-style 5-7 digit student IDs. No context needed.
+    {
+        "entity": "STUDENT_NUMBER",
+        "patterns": [Pattern(name="student_number", regex=r'\b[0-9]{5,7}\b', score=0.85)],
+        "context": None,
+        "comment": "Catches e.g. 547795, 1234567. Caveat: may match random number sequences.",
+    },
+    # USERNAME: Social handles (@xxx) and usernames with underscores/digits (j_doe88, van_der_meer).
+    # Context boosts confidence when "insta", "github", "account" etc. are nearby.
+    # We avoid generic word-like patterns to prevent false positives on normal text.
+    {
+        "entity": "USERNAME",
+        "patterns": [
+            Pattern(name="at_handle", regex=r'@[\w]+', score=0.9),
+            Pattern(name="underscore_username", regex=r'\b[\w]+(?:_[\w]+)+\b', score=0.75),
+            Pattern(name="username_with_digits", regex=r'\b[a-zA-Z][a-zA-Z0-9_]{1,25}\d{2,}[a-zA-Z0-9_]*\b', score=0.75),
+        ],
+        "context": ["insta", "instagram", "github", "account", "handle", "username", "profiel", "genaamd", "bekend"],
+        "comment": "Caveat: underscore pattern matches 'de_les' etc.; context helps. Digit pattern needs 2+ trailing digits.",
+    },
+    # OBFUSCATED_EMAIL: Dutch spelled-out emails ("x punt y apenstaartje z punt nl").
+    # Requires "apenstaartje" (at) and "punt" (dot) to avoid generic matches.
+    {
+        "entity": "OBFUSCATED_EMAIL",
+        "patterns": [
+            Pattern(
+                name="dutch_spelled_email",
+                regex=r'[\w_]+(?:\s+(?:punt|\.)\s+[\w_]+)+\s+apenstaartje\s+[\w_]+(?:\s+(?:punt|\.)\s+[\w_]+)+',
+                score=0.85,
+            ),
+        ],
+        "context": ["mail", "mailen", "email", "bereiken", "contact"],
+        "comment": "Catches e.g. 's punt van_der_meer apenstaartje student punt fontys punt nl'.",
+    },
+    # BUILDING_OR_ROOM: Room/block codes (R1, TQ 3.14, lokaal 2.05, gebouw R2).
+    {
+        "entity": "BUILDING_OR_ROOM",
+        "patterns": [
+            Pattern(name="room_code", regex=r'\b(?:R|TQ|TL|TX)\s*\d+(?:[.,]\d+)?\b', score=0.8),
+            Pattern(name="lokaal_number", regex=r'\b(?:lokaal|gebouw|ruimte)\s+\d+(?:[.,]\d+)?\b', score=0.85),
+        ],
+        "context": ["lokaal", "gebouw", "lokaalnummer", "kamer", "ruimte", "lokaal"],
+        "comment": "Catches R1, TQ 3.14, lokaal 2.05. Caveat: standalone 'R1' without context may be false positive.",
+    },
+]
+
+# Operator mapping: which replacement tag to use per entity. DEFAULT=keep ignores
+# entities we don't explicitly handle (e.g. DATE_TIME if we want to keep dates).
+PRESIDIO_OPERATORS = {
+    "PERSON": OperatorConfig("replace", {"new_value": "[NAME]"}),
+    "EMAIL_ADDRESS": OperatorConfig("replace", {"new_value": "[PII]"}),
+    "PHONE_NUMBER": OperatorConfig("replace", {"new_value": "[PII]"}),
+    "STUDENT_NUMBER": OperatorConfig("replace", {"new_value": "[PII]"}),
+    "LOCATION": OperatorConfig("replace", {"new_value": "[LOCATION]"}),
+    "NRP": OperatorConfig("replace", {"new_value": "[NAME]"}),
+    "USERNAME": OperatorConfig("replace", {"new_value": "[PII]"}),
+    "OBFUSCATED_EMAIL": OperatorConfig("replace", {"new_value": "[PII]"}),
+    "BUILDING_OR_ROOM": OperatorConfig("replace", {"new_value": "[PII]"}),
+    "DEFAULT": OperatorConfig("keep"),
+}
+
+
+def register_custom_presidio_recognizers(analyzer_engine) -> None:
+    """
+    Register all custom Presidio pattern recognizers from PRESIDIO_PATTERN_DEFINITIONS.
+    Creates recognizers for both nl and en so they run regardless of detected language.
+    """
+    for defn in PRESIDIO_PATTERN_DEFINITIONS:
+        entity = defn["entity"]
+        patterns = defn["patterns"]
+        context = defn.get("context")
+        for lang in ["nl", "en"]:
+            rec = PatternRecognizer(
+                supported_entity=entity,
+                patterns=patterns,
+                supported_language=lang,
+                context=context,
+            )
+            analyzer_engine.registry.add_recognizer(rec)
+    logging.info(f"Registered {len(PRESIDIO_PATTERN_DEFINITIONS)} custom Presidio recognizer types (nl+en).")
+
+
+def build_presidio_operators(config: Optional[dict] = None) -> dict:
+    """
+    Build the operator dict for Presidio anonymizer. If config is provided,
+    respect user toggles (names, locations, pii); otherwise use full PRESIDIO_OPERATORS.
+    """
+    if not config:
+        return dict(PRESIDIO_OPERATORS)
+    operators = {}
+    if config.get("names", True):
+        operators["PERSON"] = OperatorConfig("replace", {"new_value": "[NAME]"})
+        operators["NRP"] = OperatorConfig("replace", {"new_value": "[NAME]"})
+    else:
+        operators["PERSON"] = OperatorConfig("keep")
+        operators["NRP"] = OperatorConfig("keep")
+    if config.get("locations", True):
+        operators["LOCATION"] = OperatorConfig("replace", {"new_value": "[LOCATION]"})
+    else:
+        operators["LOCATION"] = OperatorConfig("keep")
+    if config.get("pii", True):
+        operators["EMAIL_ADDRESS"] = OperatorConfig("replace", {"new_value": "[PII]"})
+        operators["PHONE_NUMBER"] = OperatorConfig("replace", {"new_value": "[PII]"})
+        operators["STUDENT_NUMBER"] = OperatorConfig("replace", {"new_value": "[PII]"})
+        operators["USERNAME"] = OperatorConfig("replace", {"new_value": "[PII]"})
+        operators["OBFUSCATED_EMAIL"] = OperatorConfig("replace", {"new_value": "[PII]"})
+        operators["BUILDING_OR_ROOM"] = OperatorConfig("replace", {"new_value": "[PII]"})
+    else:
+        for e in ("EMAIL_ADDRESS", "PHONE_NUMBER", "STUDENT_NUMBER", "USERNAME", "OBFUSCATED_EMAIL", "BUILDING_OR_ROOM"):
+            operators[e] = OperatorConfig("keep")
+    operators["DEFAULT"] = OperatorConfig("keep")
+    return operators
+
+
+register_custom_presidio_recognizers(analyzer)
 anonymizer = AnonymizerEngine()
 
 # Initialize eu-pii-safeguard (tabularisai/eu-pii-safeguard)
@@ -96,6 +214,10 @@ def eu_pii_safeguard_anonymize(text: str, config: dict = None) -> str:
         span = text[ent["start"]:ent["end"]]
         if not span.strip():
             continue
+        # Filter single-char spans: token classifiers often mislabel subword tokens
+        # (e.g. "t" as FIRSTNAME), causing catastrophic replacement of all "t" in text.
+        if len(span) < 2:
+            continue
 
         label = ent["entity_group"]
         tag = _eu_pii_tag(label)
@@ -119,17 +241,6 @@ def eu_pii_safeguard_anonymize(text: str, config: dict = None) -> str:
         logging.info(f"eu-pii-safeguard caught {len(replaced)} additional entities: {', '.join(replaced)}")
 
     return result
-
-
-PRESIDIO_OPERATORS = {
-    "PERSON":        OperatorConfig("replace", {"new_value": "[NAME]"}),
-    "EMAIL_ADDRESS": OperatorConfig("replace", {"new_value": "[PII]"}),
-    "PHONE_NUMBER":  OperatorConfig("replace", {"new_value": "[PII]"}),
-    "STUDENT_NUMBER":OperatorConfig("replace", {"new_value": "[PII]"}),
-    "LOCATION":      OperatorConfig("replace", {"new_value": "[LOCATION]"}),
-    "NRP":           OperatorConfig("replace", {"new_value": "[NAME]"}), # Nationality/Religious/Political sometimes catches groups/names
-    "DEFAULT":       OperatorConfig("keep"), # We ignore other things that Presidio finds
-}
 
 
 def get_dynamic_prompt(config: dict = None) -> str:
@@ -190,19 +301,8 @@ def anonymize_text(
 
             results = analyzer.analyze(text=text, language=lang)
 
-            # Build operators based on config
-            operators = {}
-            if config:
-                operators["PERSON"] = OperatorConfig("replace", {"new_value": "[NAME]"}) if config.get("names", True) else OperatorConfig("keep")
-                operators["NRP"] = OperatorConfig("replace", {"new_value": "[NAME]"}) if config.get("names", True) else OperatorConfig("keep")
-                operators["LOCATION"] = OperatorConfig("replace", {"new_value": "[LOCATION]"}) if config.get("locations", True) else OperatorConfig("keep")
-                operators["EMAIL_ADDRESS"] = OperatorConfig("replace", {"new_value": "[PII]"}) if config.get("pii", True) else OperatorConfig("keep")
-                operators["PHONE_NUMBER"] = OperatorConfig("replace", {"new_value": "[PII]"}) if config.get("pii", True) else OperatorConfig("keep")
-                operators["STUDENT_NUMBER"] = OperatorConfig("replace", {"new_value": "[PII]"}) if config.get("pii", True) else OperatorConfig("keep")
-            else:
-                operators = PRESIDIO_OPERATORS
-
-            operators["DEFAULT"] = OperatorConfig("keep")
+            # Build operators from central config; respects user toggles (names, locations, pii)
+            operators = build_presidio_operators(config)
 
             anonymized_result = anonymizer.anonymize(
                 text=text,
@@ -213,7 +313,11 @@ def anonymize_text(
 
             if results:
                 entities_desc = [f"'{text[r.start:r.end]}' ({r.entity_type})" for r in results]
+                type_counts = {}
+                for r in results:
+                    type_counts[r.entity_type] = type_counts.get(r.entity_type, 0) + 1
                 logging.info(f"Presidio caught {len(results)} entities: {', '.join(entities_desc)}")
+                logging.info(f"Presidio by type: {type_counts}")
                 logging.info(f"Presidio output: '{presidio_anonymized}'")
 
         except Exception as e:

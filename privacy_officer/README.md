@@ -13,8 +13,8 @@ To balance **speed, deterministic accuracy, and contextual understanding**, this
 **What it does:** It provides a first "coarse-grained" pass to instantly remove the most sensitive and structured data.
 **It targets:** 
 - **Identity:** Full names and surnames.
-- **Contact:** Email addresses and Phone numbers.
-- **Organization:** Fontys-specific Student Numbers (via custom regex) and employee numbers.
+- **Contact:** Email addresses, Phone numbers, and Dutch spelled-out emails (e.g. "x punt y apenstaartje z punt nl").
+- **Organization:** Fontys-specific Student Numbers (5–7 digits), usernames (@handles, j_doe88, van_der_meer), and room/building codes (R1, TQ 3.14, lokaal 2.05).
 - **Locations:** Large geographic entities (Cities, Campuses).
 
 ### Layer 2: EU-PII-Safeguard (Specialized Transformer)
