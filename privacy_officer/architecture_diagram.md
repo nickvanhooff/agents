@@ -1,6 +1,6 @@
 # 🏗️ Fontys Privacy Officer Agent - Architecture Diagram
 
-Dit diagram toont de stroom van data en communicatie tussen alle componenten van de Privacy Officer applicatie. Dit is ideaal om aan de IT-architect van Fontys te laten zien, zodat zij direct begrijpen dat **alles lokaal blijft** en de NDA gewaarborgd is.
+Dit diagram toont de stroom van data en communicatie tussen alle componenten van de Privacy Officer applicatie. Alle verwerking vindt **volledig lokaal** plaats — er gaat geen data naar de cloud.
 
 Je kunt de onderstaande Mermaid-code kopiëren en in een tool zoals [Mermaid Live Editor](https://mermaid.live/) of in jullie eigen documentatie plakken.
 
@@ -8,7 +8,7 @@ Je kunt de onderstaande Mermaid-code kopiëren en in een tool zoals [Mermaid Liv
 sequenceDiagram
     autonumber
     actor Gebruiker as Fontys Medewerker
-    box LightBlue Lokale Machine / Server
+    box DarkBlue Lokale Machine / Server
         participant UI as Web Interface (HTML/JS)
         participant API as FastAPI Backend (app.py)
         participant Core as Privacy Agent (privacy_agent.py)
@@ -70,25 +70,24 @@ Dit is een Niveau 2 (Container) C4-diagram dat perfect aantoont hoe de systemen 
 
 ```mermaid
 C4Container
-    title Container diagram voor het Fontys Privacy Officer Systeem
+    title Container diagram — Privacy Officer Systeem (volledig lokaal)
 
-    Person(medewerker, "Fontys Kwaliteitsmedewerker", "Uploadt NSE data, kiest lagen en entiteit-types, downloadt geanonimiseerde resultaten.")
+    Person(medewerker, "Fontys Medewerker", "Uploadt CSV, kiest lagen en entiteit-types, downloadt resultaat.")
 
-    System_Boundary(c1, "Privacy Officer Agent (Lokale Omgeving)") {
-        Container(spa, "Web Interface", "HTML, CSS, JavaScript", "Upload, kolomnaam, layer-checkboxes (1–3), entiteit-types.")
-        Container(api, "Privacy API App", "Python, FastAPI", "Verwerkt uploads, valideert layers, orkestreert pipeline, SSE voortgang, downloads.")
-        Container(agent, "Core Privacy Logic", "Python, Presidio, Transformers, Pandas", "Triple-layer pipeline: (1) Presidio NER+regex, (2) EU-PII-Safeguard transformer, (3) Ollama LLM. Lagen selecteerbaar.")
-        Container(llm, "Ollama Service", "Ollama (aya-expanse:8b)", "Layer 3: Lokaal LLM voor contextuele PII-extractie.")
-        
-        ContainerDb(fs, "Local File System", "Uploads Map", "raw_*.csv en safe_*.csv")
+    System_Boundary(c1, "Privacy Officer Agent (lokaal)") {
+        Container(spa, "Web Interface", "HTML/CSS/JS", "Upload-formulier, layer-checkboxes, download.")
+        Container(api, "Privacy API", "Python, FastAPI", "Verwerkt uploads, orkestreert pipeline, SSE voortgang.")
+        Container(agent, "Core Privacy Logic", "Python, Presidio, Transformers", "Triple-layer pipeline: Presidio → EU-PII-Safeguard → Ollama.")
+        Container(llm, "Ollama Service", "aya-expanse:8b", "Lokaal LLM voor contextuele PII-extractie.")
+        ContainerDb(fs, "Local File System", "Uploads map", "raw_*.csv / safe_*.csv")
     }
 
-    Rel(medewerker, spa, "Bezoekt", "Webbrowser (http://localhost:8000)")
-    Rel(spa, api, "Maakt API calls", "Multipart Form + SSE")
-    Rel(api, fs, "Slaat op / Leest", "Lokale Bestands-I/O")
-    Rel(api, agent, "Roept aan", "process_dataframe(df, text_column, config, layers)")
-    Rel(agent, llm, "Layer 3: JSON-extractie", "HTTP POST (localhost:11434)")
-    Rel(llm, agent, "Retourneert JSON", "Extracted entities")
+    Rel(medewerker, spa, "localhost:8000")
+    Rel(spa, api, "Upload / Voortgang / Download")
+    Rel(api, fs, "Lezen / Schrijven")
+    Rel(api, agent, "process_dataframe()")
+    Rel(agent, llm, "localhost:11434")
+    Rel(llm, agent, "JSON")
 ```
 
 ---
@@ -99,34 +98,31 @@ Dit is een Niveau 3 (Component) C4-diagram dat inzoomt in de "Privacy API App" e
 
 ```mermaid
 C4Component
-    title Component diagram voor de Privacy Officer API en Core Logic
+    title Component diagram — Privacy API en Core Logic
 
-    Container(spa, "Web Interface", "HTML/JS", "Upload, kolomnaam, layer-checkboxes (1–3), entiteit-types.")
-    Container(fs, "Local File System", "Uploads Map", "/uploads/")
-    Container(llm, "Ollama Service", "aya-expanse:8b", "Layer 3: contextuele PII-extractie")
+    Container(spa, "Web Interface", "HTML/JS", "Upload-formulier en download.")
+    Container(fs, "Local File System", "Uploads map", "/uploads/")
+    Container(llm, "Ollama Service", "aya-expanse:8b", "Contextuele PII-extractie.")
 
     Container_Boundary(api, "Privacy API App (app.py)") {
-        Component(router_ui, "UI Router", "FastAPI Route", "Serveert index.html op '/'")
-        Component(router_api, "API Router", "FastAPI Route", "POST /api/anonymize, GET /api/progress (SSE), GET /api/download")
-        Component(file_handler, "File Handler", "Python File I/O", "Slaat raw_*.csv op, leest CSV, schrijft safe_*.csv.")
+        Component(router_ui, "UI Router", "FastAPI", "Serveert index.html")
+        Component(router_api, "API Router", "FastAPI", "Anonymize, voortgang, download")
+        Component(file_handler, "File Handler", "File I/O", "Beheert raw/safe CSV")
     }
 
     Container_Boundary(core, "Core Privacy Logic (privacy_agent.py)") {
-        Component(df_processor, "DataFrame Processor", "Pandas", "Voortgangs-loop, roept anonymize_text per rij aan.")
-        Component(anonymize_text, "anonymize_text", "Python", "L1: Presidio (in-process). L2: EU-PII-Safeguard (in-process). L3: Ollama (HTTP). Respecteert layers.")
-        Component(ollama_client, "Ollama Client", "ollama Python Lib", "Verstuurt JSON-extractie prompt naar LLM.")
+        Component(df_processor, "DataFrame Processor", "Pandas", "Verwerkt rijen")
+        Component(anonymize_text, "anonymize_text()", "Python", "L1 Presidio · L2 EU-PII · L3 Ollama")
+        Component(ollama_client, "Ollama Client", "ollama lib", "Prompt naar lokaal LLM")
     }
 
-    Rel(spa, router_ui, "Haalt webpagina op", "GET /")
-    Rel(spa, router_api, "Form-data + SSE", "POST /api/anonymize")
-    
-    Rel(router_api, file_handler, "Delegeert bestandsopslag")
-    Rel(file_handler, fs, "Schrijft/Leest raw_*.csv, safe_*.csv")
-    
-    Rel(router_api, df_processor, "process_dataframe(df, text_column, config, layers)")
-    Rel(df_processor, anonymize_text, "Stuurt text per rij")
-    Rel(anonymize_text, ollama_client, "Layer 3", "get_dynamic_prompt + chat")
-    
-    Rel(ollama_client, llm, "Stuurt prompt", "localhost:11434")
-    Rel(llm, ollama_client, "JSON met entiteiten")
+    Rel(spa, router_ui, "GET /")
+    Rel(spa, router_api, "POST /api/anonymize")
+    Rel(router_api, file_handler, "Opslaan")
+    Rel(file_handler, fs, "Lezen / Schrijven")
+    Rel(router_api, df_processor, "process_dataframe()")
+    Rel(df_processor, anonymize_text, "Per rij")
+    Rel(anonymize_text, ollama_client, "Layer 3")
+    Rel(ollama_client, llm, "localhost:11434")
+    Rel(llm, ollama_client, "JSON")
 ```
