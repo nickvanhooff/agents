@@ -99,8 +99,12 @@ async def anonymize_csv(
         "student_nr": parse_bool(anon_student_nr)
     }
     
-    # Using our default local model standard
-    model_name = os.getenv('OLLAMA_MODEL', 'aya-expanse:8b')
+    # Pick model name from env based on active backend
+    backend = os.getenv('LLM_BACKEND', 'vllm')
+    if backend == 'vllm':
+        model_name = os.getenv('VLLM_MODEL', 'microsoft/Phi-3-mini-4k-instruct')
+    else:
+        model_name = os.getenv('OLLAMA_MODEL', 'aya-expanse:8b')
     
     # We pass progress_state to process_dataframe so it can update it in real-time
     processed_df = process_dataframe(df, text_column=text_column, model_name=model_name, config=config, progress_state=progress_state, layers=layers_set)

@@ -18,13 +18,13 @@ Each layer receives the **output** of the previous layer. Layer-only runs use **
 
 ## Summary: What Each Configuration Does
 
-| File | Layers used | Input to each layer |
-|------|-------------|----------------------|
-| `layer_1` | Presidio only | Raw → Layer 1 |
-| `layer_2` | EU-PII only | Raw → Layer 2 |
-| `layer_3` | LLM only | Raw → Layer 3 |
-| `layer1+2` | Presidio + EU-PII | Raw → L1 → L2 |
-| `all_Layers` | Full pipeline | Raw → L1 → L2 → L3 |
+| File         | Layers used       | Input to each layer |
+| ------------ | ----------------- | ------------------- |
+| `layer_1`    | Presidio only     | Raw → Layer 1       |
+| `layer_2`    | EU-PII only       | Raw → Layer 2       |
+| `layer_3`    | LLM only          | Raw → Layer 3       |
+| `layer1+2`   | Presidio + EU-PII | Raw → L1 → L2       |
+| `all_Layers` | Full pipeline     | Raw → L1 → L2 → L3  |
 
 ---
 
@@ -168,13 +168,13 @@ So for this dataset:
 
 **Original:** Tijdens het project in semester 4 werd ik in de groep gezet met die lange jongen met die tatoeage in zijn nek, J.D., wat zorgde voor veel wrijving.
 
-| Config | anonymized_feedback_text |
-|--------|--------------------------|
-| **Layer 1** | `Tijdens het project in semester 4 werd ik in de groep gezet met die lange jongen met die tatoeage in zijn nek, [NAME], wat zorgde voor veel wrijving.` |
-| **Layer 2** | `Tijdens het project in semester 4 werd ik in de groep gezet met die lange jongen met die tatoeage in zijn nek, J.D., wat zorgde voor veel wrijving.` (J.D. kept) |
-| **Layer 3** | `Tijdens het [COURSE/DEPT] in [LOCATION] werd ik in de groep gezet met [TITLE] met die [PHYSICAL_DESCRIPTOR], [NAME], wat zorgde voor veel wrijving.` |
-| **Layer 1+2** | Same as Layer 1 |
-| **All** | `Tijdens het [COURSE/DEPT] in [COURSE/DEPT] werd ik in de groep gezet met die [PHYSICAL_DESCRIPTOR], [NAME], wat zorgde voor veel wrijving.` |
+| Config        | anonymized_feedback_text                                                                                                                                          |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Layer 1**   | `Tijdens het project in semester 4 werd ik in de groep gezet met die lange jongen met die tatoeage in zijn nek, [NAME], wat zorgde voor veel wrijving.`           |
+| **Layer 2**   | `Tijdens het project in semester 4 werd ik in de groep gezet met die lange jongen met die tatoeage in zijn nek, J.D., wat zorgde voor veel wrijving.` (J.D. kept) |
+| **Layer 3**   | `Tijdens het [COURSE/DEPT] in [LOCATION] werd ik in de groep gezet met [TITLE] met die [PHYSICAL_DESCRIPTOR], [NAME], wat zorgde voor veel wrijving.`             |
+| **Layer 1+2** | Same as Layer 1                                                                                                                                                   |
+| **All**       | `Tijdens het [COURSE/DEPT] in [COURSE/DEPT] werd ik in de groep gezet met die [PHYSICAL_DESCRIPTOR], [NAME], wat zorgde voor veel wrijving.`                      |
 
 **Findings:**
 - **Layer 2 alone** misses "J.D." (initials).

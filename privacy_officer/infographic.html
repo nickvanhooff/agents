@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NSE Privacy Shield</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=JetBrains+Mono:wght@400;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #06090F;
+    --surface: #0D1420;
+    --surface2: #131C2E;
+    --border: rgba(59,130,246,0.15);
+    --blue: #3B82F6;
+    --blue-dim: rgba(59,130,246,0.12);
+    --mint: #10B981;
+    --mint-dim: rgba(16,185,129,0.12);
+    --red: #F43F5E;
+    --red-dim: rgba(244,63,94,0.12);
+    --amber: #F59E0B;
+    --amber-dim: rgba(245,158,11,0.12);
+    --purple: #A78BFA;
+    --purple-dim: rgba(167,139,250,0.12);
+    --text: #E2E8F0;
+    --muted: #64748B;
+    --dim: #94A3B8;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Outfit', sans-serif;
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+  body::before {
+    content:'';
+    position:fixed;
+    inset:0;
+    background-image:
+      linear-gradient(rgba(59,130,246,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(59,130,246,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events:none;
+    z-index:0;
+  }
+
+  /* LANG TOGGLE */
+  .lang-toggle {
+    position: fixed;
+    top: 24px;
+    right: 32px;
+    z-index: 100;
+    display: flex;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .lang-btn {
+    padding: 8px 18px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    transition: all 0.2s;
+    letter-spacing: 0.06em;
+  }
+  .lang-btn.active {
+    background: var(--blue);
+    color: #fff;
+  }
+
+  /* Hide/show language content */
+  [data-lang="en"] { display: none; }
+  body.en [data-lang="nl"] { display: none; }
+  body.en [data-lang="en"] { display: contents; }
+  /* For block elements */
+  .nl-block { display: block; }
+  .en-block { display: none; }
+  body.en .nl-block { display: none; }
+  body.en .en-block { display: block; }
+  .nl-flex { display: flex; }
+  .en-flex { display: none; }
+  body.en .nl-flex { display: none; }
+  body.en .en-flex { display: flex; }
+
+  .page {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 60px 40px 60px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* HERO */
+  .hero {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: start;
+    gap: 40px;
+    margin-bottom: 48px;
+    padding-bottom: 48px;
+    border-bottom: 1px solid var(--border);
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--mint-dim);
+    border: 1px solid rgba(16,185,129,0.3);
+    color: var(--mint);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    padding: 5px 12px;
+    border-radius: 4px;
+    margin-bottom: 16px;
+    text-transform: uppercase;
+  }
+  .badge::before {
+    content:'';
+    width:6px; height:6px;
+    background:var(--mint);
+    border-radius:50%;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%,100%{opacity:1;transform:scale(1)}
+    50%{opacity:.5;transform:scale(.8)}
+  }
+  .hero-title {
+    font-family: 'DM Serif Display', serif;
+    font-size: clamp(32px, 4vw, 54px);
+    line-height: 1.08;
+    color: #fff;
+    margin-bottom: 12px;
+  }
+  .hero-title em { font-style:italic; color:var(--blue); }
+  .hero-sub {
+    font-size: 15px;
+    color: var(--dim);
+    font-weight: 300;
+    max-width: 480px;
+    line-height: 1.7;
+  }
+  .hero-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 180px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    text-align: center;
+  }
+  .stat-number {
+    font-family: 'DM Serif Display', serif;
+    font-size: 32px;
+    color: var(--blue);
+    line-height: 1;
+    margin-bottom: 2px;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: var(--muted);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* LOCAL BANNER */
+  .local-banner {
+    background: linear-gradient(135deg, rgba(16,185,129,0.07), rgba(16,185,129,0.02));
+    border: 1px solid rgba(16,185,129,0.25);
+    border-radius: 10px;
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 56px;
+  }
+  .local-icon { font-size: 20px; }
+  .local-text strong { color: var(--mint); font-size: 14px; display:block; }
+  .local-text span { font-size: 12px; color: var(--muted); }
+  .chips { margin-left:auto; display:flex; gap:6px; flex-wrap:wrap; }
+  .chip {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: rgba(16,185,129,0.08);
+    color: var(--mint);
+    border: 1px solid rgba(16,185,129,0.2);
+  }
+
+  /* SECTION */
+  .section { margin-bottom: 64px; }
+  .sec-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--blue);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .sec-label::after { content:''; flex:1; height:1px; background:var(--border); }
+  .sec-title {
+    font-family: 'DM Serif Display', serif;
+    font-size: 26px;
+    color: #fff;
+    margin-bottom: 24px;
+  }
+
+  /* QUESTION CARDS */
+  .question-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .q-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .q-number {
+    font-family: 'DM Serif Display', serif;
+    font-size: 28px;
+    color: var(--blue);
+    opacity: 0.4;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+  .q-text {
+    font-size: 14px;
+    color: var(--text);
+    font-weight: 500;
+    line-height: 1.5;
+  }
+  .q-hint {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  .insight-box {
+    background: linear-gradient(135deg, rgba(59,130,246,0.07), var(--surface));
+    border: 1px solid rgba(59,130,246,0.25);
+    border-radius: 10px;
+    padding: 18px 22px;
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+  }
+  .insight-icon { font-size: 18px; flex-shrink:0; margin-top:1px; }
+  .insight-text { font-size: 13px; color: var(--dim); line-height: 1.6; }
+  .insight-text strong { color: var(--blue); }
+
+  /* PIPELINE */
+  .pipeline {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    align-items: start;
+  }
+  .pipe-step {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 14px;
+    position: relative;
+  }
+  .pipe-step + .pipe-step::before {
+    content: '→';
+    position: absolute;
+    left: -12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .step-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    padding: 2px 7px;
+    border-radius: 3px;
+    margin-bottom: 10px;
+    display: inline-block;
+    text-transform: uppercase;
+  }
+  .t-in   { background:rgba(100,116,139,0.15); color:var(--muted); }
+  .t-l1   { background:var(--blue-dim); color:var(--blue); border:1px solid rgba(59,130,246,0.25); }
+  .t-l2   { background:var(--purple-dim); color:var(--purple); border:1px solid rgba(167,139,250,0.25); }
+  .t-l3   { background:var(--amber-dim); color:var(--amber); border:1px solid rgba(245,158,11,0.25); }
+  .t-out  { background:var(--mint-dim); color:var(--mint); border:1px solid rgba(16,185,129,0.25); }
+  .pipe-name { font-weight:600; font-size:13px; color:#fff; margin-bottom:4px; }
+  .pipe-tech { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--muted); margin-bottom:8px; }
+  .pipe-list { list-style:none; }
+  .pipe-list li { font-size:11px; color:var(--dim); padding:2px 0; display:flex; gap:5px; }
+  .pipe-list li::before { content:'·'; color:var(--blue); flex-shrink:0; }
+
+  /* EXAMPLE SWITCHER */
+  .ex-tabs { display:flex; gap:8px; margin-bottom:16px; }
+  .ex-tab {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.05em;
+  }
+  .ex-tab.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .ex-panel { display:none; }
+  .ex-panel.active { display:grid; grid-template-columns:1fr; gap:12px; }
+
+  /* BEFORE/AFTER */
+  .ba-wrap { display:grid; grid-template-columns:1fr; gap:12px; }
+  .ba-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .ba-head {
+    padding: 11px 18px;
+    border-bottom: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+  }
+  .ba-head.before { color:var(--red); background:var(--red-dim); }
+  .ba-head.l12    { color:var(--amber); background:var(--amber-dim); }
+  .ba-head.all    { color:var(--mint); background:var(--mint-dim); border-color:rgba(16,185,129,0.2); }
+  .ba-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+  .ba-body { padding:16px 18px; font-family:'JetBrains Mono',monospace; font-size:13px; line-height:1.9; }
+
+  .h-name     { color:var(--blue);   background:var(--blue-dim);   padding:0 5px; border-radius:3px; font-weight:700; }
+  .h-title    { color:var(--purple); background:var(--purple-dim); padding:0 5px; border-radius:3px; font-weight:700; }
+  .h-physical { color:var(--amber);  background:var(--amber-dim);  padding:0 5px; border-radius:3px; font-weight:700; }
+  .h-location { color:var(--mint);   background:var(--mint-dim);   padding:0 5px; border-radius:3px; font-weight:700; }
+  .h-missed   { color:var(--red);    text-decoration:underline; text-decoration-style:wavy; text-decoration-color:var(--red); }
+
+  /* LEGEND */
+  .legend { display:flex; gap:14px; flex-wrap:wrap; padding:10px 18px; border-top:1px solid var(--border); }
+  .leg-item { display:flex; align-items:center; gap:5px; font-size:11px; color:var(--muted); }
+  .leg-dot { width:8px; height:8px; border-radius:2px; flex-shrink:0; }
+
+  /* DIFF TABLE */
+  .diff-table { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .diff-head {
+    display: grid;
+    grid-template-columns: 2.2fr 1fr 1fr 1fr;
+    border-bottom: 1px solid var(--border);
+  }
+  .dh { padding:11px 16px; font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+  .dh-l1  { color:var(--blue);   border-left:1px solid var(--border); }
+  .dh-l12 { color:var(--amber);  border-left:1px solid var(--border); }
+  .dh-all { color:var(--mint);   border-left:1px solid var(--border); }
+  .diff-row { display:grid; grid-template-columns:2.2fr 1fr 1fr 1fr; border-bottom:1px solid rgba(59,130,246,0.05); }
+  .diff-row:last-child { border-bottom:none; }
+  .diff-row:hover { background:rgba(255,255,255,0.015); }
+  .dc { padding:10px 16px; font-size:12px; color:var(--dim); display:flex; align-items:center; }
+  .dc.pii { color:var(--text); font-weight:500; font-size:13px; }
+  .dc.check { border-left:1px solid var(--border); justify-content:center; font-size:15px; }
+  .yes  { color:var(--mint); }
+  .no   { color:var(--red); opacity:.5; }
+  .warn { color:var(--amber); }
+
+  /* SPEED */
+  .speed-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+  .speed-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; }
+  .speed-label { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--muted); margin-bottom:10px; text-transform:uppercase; letter-spacing:.06em; }
+  .speed-bar-bg { background:rgba(255,255,255,0.05); border-radius:4px; height:6px; margin-bottom:10px; overflow:hidden; }
+  .speed-bar { height:100%; border-radius:4px; }
+  .speed-time { font-family:'DM Serif Display',serif; font-size:26px; color:#fff; line-height:1; margin-bottom:2px; }
+  .speed-sub { font-size:11px; color:var(--muted); }
+  .speed-note { font-size:11px; color:var(--muted); margin-top:10px; padding-top:10px; border-top:1px solid var(--border); font-style:italic; }
+
+  /* CAVEAT */
+  .caveat-box {
+    background: var(--amber-dim);
+    border: 1px solid rgba(245,158,11,0.25);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-top: 20px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .caveat-icon { font-size: 18px; flex-shrink:0; }
+  .caveat-text { font-size: 12px; color: var(--dim); line-height: 1.6; }
+  .caveat-text strong { color: var(--amber); }
+
+  /* REC */
+  .rec-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .rec-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:22px; position:relative; overflow:hidden; }
+  .rec-card.featured { border-color:rgba(16,185,129,0.35); background:linear-gradient(135deg,rgba(16,185,129,0.05),var(--surface)); }
+  .rec-card.featured::after {
+    content: attr(data-badge);
+    position:absolute; top:14px; right:14px;
+    font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700; letter-spacing:.1em;
+    color:var(--mint); background:var(--mint-dim); border:1px solid rgba(16,185,129,0.25);
+    padding:2px 7px; border-radius:3px;
+  }
+  .rec-icon { font-size:24px; margin-bottom:10px; }
+  .rec-title { font-weight:700; font-size:15px; color:#fff; margin-bottom:6px; }
+  .rec-desc { font-size:12px; color:var(--dim); line-height:1.6; }
+  .rec-tag {
+    display:inline-flex; margin-top:10px;
+    font-family:'JetBrains Mono',monospace; font-size:10px;
+    padding:3px 8px; border-radius:3px;
+    background:var(--mint-dim); color:var(--mint); border:1px solid rgba(16,185,129,0.2);
+  }
+  .rec-tag.a { background:var(--amber-dim); color:var(--amber); border-color:rgba(245,158,11,0.2); }
+
+  /* FOOTER */
+  .footer {
+    border-top:1px solid var(--border);
+    padding-top:24px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin-top:40px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .footer-left { font-size:12px; color:var(--muted); }
+  .footer-right { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--muted); display:flex; gap:8px; flex-wrap:wrap; }
+  .ftag { background:var(--surface); border:1px solid var(--border); padding:3px 8px; border-radius:4px; }
+
+  @keyframes fadeUp { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+  .a1{animation:fadeUp .5s .05s both}
+  .a2{animation:fadeUp .5s .15s both}
+  .a3{animation:fadeUp .5s .25s both}
+  .a4{animation:fadeUp .5s .35s both}
+</style>
+</head>
+<body>
+
+<!-- LANG TOGGLE -->
+<div class="lang-toggle">
+  <button class="lang-btn active" onclick="setLang('nl')">NL</button>
+  <button class="lang-btn" onclick="setLang('en')">EN</button>
+</div>
+
+<div class="page">
+
+  <!-- HERO -->
+  <div class="hero a1">
+    <div>
+      <div class="badge">NSE · Fontys · Privacy Officer Agent</div>
+      <h1 class="hero-title">
+        <span class="nl-block">Drie lagen.<br><em>Nul dataleaks.</em></span>
+        <span class="en-block">Three layers.<br><em>Zero data leaks.</em></span>
+      </h1>
+      <p class="hero-sub nl-block">AI-systeem dat NSE-studentfeedback anonimiseert vóór analyse. Volledig lokaal — niets verlaat de machine.</p>
+      <p class="hero-sub en-block">AI system that anonymises NSE student feedback before analysis. Fully local — nothing leaves the machine.</p>
+    </div>
+    <div class="hero-stats a2">
+      <div class="stat-card">
+        <div class="stat-number">3</div>
+        <div class="stat-label nl-block">Lagen</div>
+        <div class="stat-label en-block">Layers</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number">100%</div>
+        <div class="stat-label nl-block">Lokaal</div>
+        <div class="stat-label en-block">Local</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOCAL BANNER -->
+  <div class="local-banner a2">
+    <div class="local-icon">🔒</div>
+    <div class="local-text">
+      <strong class="nl-block">Data verlaat nooit de machine</strong>
+      <strong class="en-block">Data never leaves the machine</strong>
+      <span class="nl-block">Geen cloud, geen externe API. Het LLM draait lokaal via Ollama.</span>
+      <span class="en-block">No cloud, no external API. The LLM runs locally via Ollama.</span>
+    </div>
+    <div class="chips">
+      <span class="chip">Docker</span>
+      <span class="chip">Ollama</span>
+      <span class="chip">FastAPI</span>
+      <span class="chip">localhost</span>
+    </div>
+  </div>
+
+  <!-- QUESTIONS FOR OFFICERS -->
+  <div class="section a3">
+    <div class="sec-label nl-block">00 — Vragen voor kwaliteitsmedewerkers</div>
+    <div class="sec-label en-block">00 — Questions for quality officers</div>
+    <h2 class="sec-title nl-block">Jullie huidige situatie</h2>
+    <h2 class="sec-title en-block">Your current situation</h2>
+
+    <div class="question-grid">
+      <div class="q-card">
+        <div class="q-number">1</div>
+        <div>
+          <div class="q-text nl-block">Hoe ontvangen jullie momenteel de NSE-data?</div>
+          <div class="q-text en-block">How do you currently receive the NSE data?</div>
+          <div class="q-hint nl-block">Via portal, export, directe toegang?</div>
+          <div class="q-hint en-block">Via portal, export, direct access?</div>
+        </div>
+      </div>
+      <div class="q-card">
+        <div class="q-number">2</div>
+        <div>
+          <div class="q-text nl-block">Zien jullie nu alle ruwe antwoorden?</div>
+          <div class="q-text en-block">Do you currently see all raw responses?</div>
+          <div class="q-hint nl-block">Inclusief namen, contactgegevens, persoonlijke beschrijvingen?</div>
+          <div class="q-hint en-block">Including names, contact details, personal descriptions?</div>
+        </div>
+      </div>
+      <div class="q-card">
+        <div class="q-number">3</div>
+        <div>
+          <div class="q-text nl-block">Zien jullie nu individuele antwoorden, of alleen samenvattingen?</div>
+          <div class="q-text en-block">Do you currently see individual responses, or only summaries?</div>
+          <div class="q-hint nl-block">Dit bepaalt welke outputbeperking nodig is.</div>
+          <div class="q-hint en-block">This determines which output restrictions are needed.</div>
+        </div>
+      </div>
+      <div class="q-card">
+        <div class="q-number">4</div>
+        <div>
+          <div class="q-text nl-block">Mogen jullie data exporteren, en zo ja — wat?</div>
+          <div class="q-text en-block">Are you allowed to export data, and if so — what?</div>
+          <div class="q-hint nl-block">Alleen geaggregeerde resultaten, of ook losse antwoorden?</div>
+          <div class="q-hint en-block">Only aggregated results, or also individual responses?</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="insight-box">
+      <div class="insight-icon">💡</div>
+      <div class="insight-text nl-block">
+        <strong>Als jullie nu al alle ruwe data zien:</strong> dan is Laag 1 + 2 al een grote stap vooruit. Namen, e-mails, telefoonnummers en medische info worden weggehaald in minder dan 2 seconden. Laag 3 (LLM) voegt contextuele bescherming toe, maar is een tweede stap.
+      </div>
+      <div class="insight-text en-block">
+        <strong>If you currently see all raw data:</strong> Layer 1 + 2 is already a major improvement. Names, emails, phone numbers and medical info are removed in under 2 seconds. Layer 3 (LLM) adds contextual protection, but is a next step.
+      </div>
+    </div>
+  </div>
+
+  <!-- PIPELINE -->
+  <div class="section a3">
+    <div class="sec-label nl-block">01 — De pipeline</div>
+    <div class="sec-label en-block">01 — The pipeline</div>
+    <h2 class="sec-title nl-block">Hoe het werkt</h2>
+    <h2 class="sec-title en-block">How it works</h2>
+
+    <div class="pipeline">
+      <div class="pipe-step">
+        <span class="step-tag t-in">Input</span>
+        <div class="pipe-name nl-block">Ruwe feedback</div>
+        <div class="pipe-name en-block">Raw feedback</div>
+        <div class="pipe-tech">CSV</div>
+        <ul class="pipe-list">
+          <li class="nl-block">Originele studenten-tekst</li>
+          <li class="en-block">Original student text</li>
+        </ul>
+      </div>
+      <div class="pipe-step">
+        <span class="step-tag t-l1">L1</span>
+        <div class="pipe-name">Presidio</div>
+        <div class="pipe-tech">Spacy + Regex</div>
+        <ul class="pipe-list">
+          <li class="nl-block">Namen, e-mail, telefoon</li>
+          <li class="en-block">Names, email, phone</li>
+          <li class="nl-block">Locaties, studentnummers</li>
+          <li class="en-block">Locations, student IDs</li>
+          <li class="nl-block">@handles, zaalnummers</li>
+          <li class="en-block">@handles, room codes</li>
+        </ul>
+      </div>
+      <div class="pipe-step">
+        <span class="step-tag t-l2">L2</span>
+        <div class="pipe-name">EU-PII-Safeguard</div>
+        <div class="pipe-tech">XLM-RoBERTa</div>
+        <ul class="pipe-list">
+          <li class="nl-block">Medisch (ADHD)</li>
+          <li class="en-block">Medical (ADHD)</li>
+          <li class="nl-block">Namen die L1 mist</li>
+          <li class="en-block">Names L1 misses</li>
+        </ul>
+      </div>
+      <div class="pipe-step">
+        <span class="step-tag t-l3">L3</span>
+        <div class="pipe-name">Ollama LLM</div>
+        <div class="pipe-tech">aya-expanse:8b · lokaal</div>
+        <ul class="pipe-list">
+          <li class="nl-block">Fysieke beschrijvingen</li>
+          <li class="en-block">Physical descriptors</li>
+          <li class="nl-block">"mijn mentor", titels</li>
+          <li class="en-block">"my mentor", titles</li>
+          <li>BSN</li>
+        </ul>
+      </div>
+      <div class="pipe-step">
+        <span class="step-tag t-out">Output</span>
+        <div class="pipe-name nl-block">Geanonimiseerde CSV</div>
+        <div class="pipe-name en-block">Anonymised CSV</div>
+        <div class="pipe-tech">safe_*.csv</div>
+        <ul class="pipe-list">
+          <li class="nl-block">Klaar voor analyse</li>
+          <li class="en-block">Ready for analysis</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- BEFORE / AFTER -->
+  <div class="section a4">
+    <div class="sec-label nl-block">02 — Voorbeeld</div>
+    <div class="sec-label en-block">02 — Example</div>
+    <h2 class="sec-title nl-block">Vóór en ná de agent</h2>
+    <h2 class="sec-title en-block">Before and after the agent</h2>
+
+    <!-- TABS -->
+    <div class="ex-tabs">
+      <button class="ex-tab active" onclick="switchEx(0)">
+        <span class="nl-block">Fysieke beschrijving</span>
+        <span class="en-block">Physical description</span>
+      </button>
+      <button class="ex-tab" onclick="switchEx(1)">
+        <span class="nl-block">Medisch + contact</span>
+        <span class="en-block">Medical + contact</span>
+      </button>
+      <button class="ex-tab" onclick="switchEx(2)">
+        <span class="nl-block">BSN + medestudent</span>
+        <span class="en-block">BSN + fellow student</span>
+      </button>
+    </div>
+
+    <!-- EXAMPLE 1: physical description -->
+    <div class="ex-panel active" id="ex-0">
+      <div class="ba-card">
+        <div class="ba-head before">
+          <div class="ba-dot" style="background:var(--red)"></div>
+          <span class="nl-block">Origineel — bevat PII</span>
+          <span class="en-block">Original — contains PII</span>
+        </div>
+        <div class="ba-body">
+          Meneer de vriess, je weet wel die <span class="h-missed">kale docent</span> met die <span class="h-missed">rode bril</span> uit gebouw <span class="h-missed">R1</span>, gaf mij onterecht een 3.4.
+        </div>
+      </div>
+      <div class="ba-card">
+        <div class="ba-head l12">
+          <div class="ba-dot" style="background:var(--amber)"></div>
+          <span class="nl-block">Na Laag 1 + 2 — gedeeltelijk anoniem</span>
+          <span class="en-block">After Layer 1 + 2 — partially anonymous</span>
+        </div>
+        <div class="ba-body">
+          <span class="h-name">[NAME]</span>, je weet wel die <span class="h-missed">kale docent</span> met die <span class="h-missed">rode bril</span> uit gebouw <span class="h-missed">R1</span>, gaf mij onterecht een 3.4.
+        </div>
+        <div class="legend">
+          <div class="leg-item"><div class="leg-dot" style="background:var(--blue)"></div><span class="nl-block">Naam verwijderd</span><span class="en-block">Name removed</span></div>
+          <div class="leg-item"><div class="leg-dot" style="background:var(--red)"></div><span class="nl-block">Fysieke beschrijving blijft staan</span><span class="en-block">Physical description remains</span></div>
+        </div>
+      </div>
+      <div class="ba-card" style="border-color:rgba(16,185,129,0.3)">
+        <div class="ba-head all">
+          <div class="ba-dot" style="background:var(--mint)"></div>
+          <span class="nl-block">Na alle 3 lagen — volledig anoniem</span>
+          <span class="en-block">After all 3 layers — fully anonymous</span>
+        </div>
+        <div class="ba-body">
+          <span class="h-name">[NAME]</span>, je weet wel die <span class="h-title">[TITLE]</span> met die <span class="h-physical">[PHYSICAL_DESCRIPTOR]</span> uit <span class="h-location">[LOCATION]</span>, gaf mij onterecht een 3.4.
+        </div>
+        <div class="legend">
+          <div class="leg-item"><div class="leg-dot" style="background:var(--blue)"></div>[NAME]</div>
+          <div class="leg-item"><div class="leg-dot" style="background:var(--purple)"></div>[TITLE]</div>
+          <div class="leg-item"><div class="leg-dot" style="background:var(--amber)"></div>[PHYSICAL_DESCRIPTOR]</div>
+          <div class="leg-item"><div class="leg-dot" style="background:var(--mint)"></div>[LOCATION]</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- EXAMPLE 2: medical + contact -->
+    <div class="ex-panel" id="ex-1">
+      <div class="ba-card">
+        <div class="ba-head before">
+          <div class="ba-dot" style="background:var(--red)"></div>
+          <span class="nl-block">Origineel — bevat PII</span>
+          <span class="en-block">Original — contains PII</span>
+        </div>
+        <div class="ba-body">
+          Ik heb <span class="h-missed">ADHD</span> en mijn begeleider <span class="h-missed">Sarah van den Berg</span> begrijpt dat niet. Ze mailt me op <span class="h-missed">s.vandenberg@fontys.nl</span> maar belt nooit op <span class="h-missed">06-12345678</span>.
+        </div>
+      </div>
+      <div class="ba-card">
+        <div class="ba-head l12">
+          <div class="ba-dot" style="background:var(--amber)"></div>
+          <span class="nl-block">Na Laag 1 + 2 — gedeeltelijk anoniem</span>
+          <span class="en-block">After Layer 1 + 2 — partially anonymous</span>
+        </div>
+        <div class="ba-body">
+          Ik heb <span class="h-physical">[MEDICAL]</span> en mijn begeleider <span class="h-name">[NAME]</span> begrijpt dat niet. Ze mailt me op <span class="h-name">[EMAIL_ADDRESS]</span> maar belt nooit op <span class="h-name">[PHONE_NUMBER]</span>.
+        </div>
+        <div class="legend">
+          <div class="leg-item"><div class="leg-dot" style="background:var(--amber)"></div><span class="nl-block">Medisch (L2)</span><span class="en-block">Medical (L2)</span></div>
+          <div class="leg-item"><div class="leg-dot" style="background:var(--blue)"></div><span class="nl-block">Naam, e-mail, telefoon (L1)</span><span class="en-block">Name, email, phone (L1)</span></div>
+        </div>
+      </div>
+      <div class="ba-card" style="border-color:rgba(16,185,129,0.3)">
+        <div class="ba-head all">
+          <div class="ba-dot" style="background:var(--mint)"></div>
+          <span class="nl-block">Na alle 3 lagen — volledig anoniem</span>
+          <span class="en-block">After all 3 layers — fully anonymous</span>
+        </div>
+        <div class="ba-body">
+          Ik heb <span class="h-physical">[MEDICAL]</span> en <span class="h-title">[ROLE]</span> <span class="h-name">[NAME]</span> begrijpt dat niet. Ze mailt me op <span class="h-name">[EMAIL_ADDRESS]</span> maar belt nooit op <span class="h-name">[PHONE_NUMBER]</span>.
+        </div>
+        <div class="legend">
+          <div class="leg-item"><div class="leg-dot" style="background:var(--purple)"></div><span class="nl-block">Rol/titel (L3)</span><span class="en-block">Role/title (L3)</span></div>
+          <div class="leg-item"><div class="leg-dot" style="background:var(--amber)"></div>[MEDICAL]</div>
+          <div class="leg-item"><div class="leg-dot" style="background:var(--blue)"></div>[NAME] [EMAIL] [PHONE]</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- EXAMPLE 3: BSN + fellow student -->
+    <div class="ex-panel" id="ex-2">
+      <div class="ba-card">
+        <div class="ba-head before">
+          <div class="ba-dot" style="background:var(--red)"></div>
+          <span class="nl-block">Origineel — bevat PII</span>
+          <span class="en-block">Original — contains PII</span>
+        </div>
+        <div class="ba-body">
+          Mijn medestudent <span class="h-missed">Ahmed Yilmaz</span> uit klas <span class="h-missed">FICT-1A</span> heeft mijn BSN <span class="h-missed">123456789</span> per ongeluk gedeeld in de groepsapp.
+        </div>
+      </div>
+      <div class="ba-card">
+        <div class="ba-head l12">
+          <div class="ba-dot" style="background:var(--amber)"></div>
+          <span class="nl-block">Na Laag 1 + 2 — gedeeltelijk anoniem</span>
+          <span class="en-block">After Layer 1 + 2 — partially anonymous</span>
+        </div>
+        <div class="ba-body">
+          Mijn medestudent <span class="h-name">[NAME]</span> uit klas <span class="h-missed">FICT-1A</span> heeft mijn BSN <span class="h-missed">123456789</span> per ongeluk gedeeld in de groepsapp.
+        </div>
+        <div class="legend">
+          <div class="leg-item"><div class="leg-dot" style="background:var(--blue)"></div><span class="nl-block">Naam verwijderd (L1+2)</span><span class="en-block">Name removed (L1+2)</span></div>
+          <div class="leg-item"><div class="leg-dot" style="background:var(--red)"></div><span class="nl-block">Klascode + BSN blijven staan</span><span class="en-block">Class code + BSN remain</span></div>
+        </div>
+      </div>
+      <div class="ba-card" style="border-color:rgba(16,185,129,0.3)">
+        <div class="ba-head all">
+          <div class="ba-dot" style="background:var(--mint)"></div>
+          <span class="nl-block">Na alle 3 lagen — volledig anoniem</span>
+          <span class="en-block">After all 3 layers — fully anonymous</span>
+        </div>
+        <div class="ba-body">
+          Mijn <span class="h-title">[ROLE]</span> <span class="h-name">[NAME]</span> uit klas <span class="h-location">[CLASS_CODE]</span> heeft mijn BSN <span class="h-physical">[BSN]</span> per ongeluk gedeeld in de groepsapp.
+        </div>
+        <div class="legend">
+          <div class="leg-item"><div class="leg-dot" style="background:var(--purple)"></div>[ROLE]</div>
+          <div class="leg-item"><div class="leg-dot" style="background:var(--blue)"></div>[NAME]</div>
+          <div class="leg-item"><div class="leg-dot" style="background:var(--mint)"></div>[CLASS_CODE]</div>
+          <div class="leg-item"><div class="leg-dot" style="background:var(--amber)"></div>[BSN]</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- COVERAGE -->
+  <div class="section a4">
+    <div class="sec-label nl-block">03 — Dekking</div>
+    <div class="sec-label en-block">03 — Coverage</div>
+    <h2 class="sec-title nl-block">Wat vangt elke configuratie?</h2>
+    <h2 class="sec-title en-block">What does each configuration catch?</h2>
+
+    <div class="diff-table">
+      <div class="diff-head">
+        <div class="dh" style="color:var(--muted)">
+          <span class="nl-block">PII-type</span><span class="en-block">PII type</span>
+        </div>
+        <div class="dh dh-l1">L1</div>
+        <div class="dh dh-l12">L1+2</div>
+        <div class="dh dh-all">
+          <span class="nl-block">Alle lagen</span><span class="en-block">All layers</span>
+        </div>
+      </div>
+      <div class="diff-row">
+        <div class="dc pii"><span class="nl-block">Namen, e-mail, telefoon</span><span class="en-block">Names, email, phone</span></div>
+        <div class="dc check"><span class="yes">✓</span></div>
+        <div class="dc check"><span class="yes">✓</span></div>
+        <div class="dc check"><span class="yes">✓</span></div>
+      </div>
+      <div class="diff-row">
+        <div class="dc pii"><span class="nl-block">Locaties, zaalnummers</span><span class="en-block">Locations, room codes</span></div>
+        <div class="dc check"><span class="yes">✓</span></div>
+        <div class="dc check"><span class="yes">✓</span></div>
+        <div class="dc check"><span class="yes">✓</span></div>
+      </div>
+      <div class="diff-row">
+        <div class="dc pii"><span class="nl-block">Medisch (ADHD, diagnose)</span><span class="en-block">Medical (ADHD, diagnosis)</span></div>
+        <div class="dc check"><span class="no">✗</span></div>
+        <div class="dc check"><span class="yes">✓</span></div>
+        <div class="dc check"><span class="yes">✓</span></div>
+      </div>
+      <div class="diff-row">
+        <div class="dc pii">"mevrouw de jong"</div>
+        <div class="dc check"><span class="no">✗</span></div>
+        <div class="dc check"><span class="no">✗</span></div>
+        <div class="dc check"><span class="yes">✓</span></div>
+      </div>
+      <div class="diff-row">
+        <div class="dc pii"><span class="nl-block">Fysieke beschrijvingen</span><span class="en-block">Physical descriptions</span></div>
+        <div class="dc check"><span class="no">✗</span></div>
+        <div class="dc check"><span class="no">✗</span></div>
+        <div class="dc check"><span class="yes">✓</span></div>
+      </div>
+      <div class="diff-row">
+        <div class="dc pii"><span class="nl-block">BSN-nummers</span><span class="en-block">BSN numbers</span></div>
+        <div class="dc check"><span class="no">✗</span></div>
+        <div class="dc check"><span class="no">✗</span></div>
+        <div class="dc check"><span class="yes">✓</span></div>
+      </div>
+      <div class="diff-row">
+        <div class="dc pii"><span class="nl-block">Contextueel ("mijn mentor")</span><span class="en-block">Contextual ("my mentor")</span></div>
+        <div class="dc check"><span class="no">✗</span></div>
+        <div class="dc check"><span class="no">✗</span></div>
+        <div class="dc check"><span class="yes">✓</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SPEED -->
+  <div class="section a4">
+    <div class="sec-label nl-block">04 — Snelheid</div>
+    <div class="sec-label en-block">04 — Speed</div>
+    <h2 class="sec-title nl-block">Verwerkingstijd (13 testrijen)</h2>
+    <h2 class="sec-title en-block">Processing time (13 test rows)</h2>
+
+    <div class="speed-grid">
+      <div class="speed-card">
+        <div class="speed-label">L1 — Presidio</div>
+        <div class="speed-bar-bg"><div class="speed-bar" style="width:0.3%;background:var(--blue)"></div></div>
+        <div class="speed-time">0.25s</div>
+        <div class="speed-sub">≈ 0.02 sec/row</div>
+      </div>
+      <div class="speed-card">
+        <div class="speed-label">L1 + L2</div>
+        <div class="speed-bar-bg"><div class="speed-bar" style="width:1.6%;background:var(--amber)"></div></div>
+        <div class="speed-time">1.6s</div>
+        <div class="speed-sub">≈ 0.12 sec/row</div>
+      </div>
+      <div class="speed-card" style="border-color:rgba(16,185,129,0.3)">
+        <div class="speed-label"><span class="nl-block">Alle lagen</span><span class="en-block">All layers</span></div>
+        <div class="speed-bar-bg"><div class="speed-bar" style="width:100%;background:linear-gradient(90deg,var(--blue),var(--purple),var(--mint))"></div></div>
+        <div class="speed-time">~1:41 min</div>
+        <div class="speed-sub">≈ 7.8 sec/row · LLM domineert</div>
+        <div class="speed-note nl-block">Hoogste privacy-bescherming</div>
+        <div class="speed-note en-block">Highest privacy protection</div>
+      </div>
+    </div>
+
+    <div class="caveat-box">
+      <div class="caveat-icon">⚠️</div>
+      <div class="caveat-text nl-block">
+        <strong>Let op — gemeten op een eigen laptop.</strong> Op betere infrastructuur (server-GPU, meer RAM) zal het significant sneller zijn. We testen momenteel ook andere, snellere modellen. De tests zijn gedaan op slechts 13 rijen — meer rijen en meer modellen moeten nog getest worden.
+      </div>
+      <div class="caveat-text en-block">
+        <strong>Note — measured on a personal laptop.</strong> On better infrastructure (server GPU, more RAM) it will be significantly faster. We are currently testing other, faster models. Tests were run on only 13 rows — more rows and more models still need to be tested.
+      </div>
+    </div>
+  </div>
+
+  <!-- RECOMMENDATION -->
+  <div class="section a4">
+    <div class="sec-label nl-block">05 — Aanbeveling</div>
+    <div class="sec-label en-block">05 — Recommendation</div>
+    <h2 class="sec-title nl-block">Welke configuratie?</h2>
+    <h2 class="sec-title en-block">Which configuration?</h2>
+
+    <div class="rec-grid">
+      <div class="rec-card featured" data-badge="AANBEVOLEN / RECOMMENDED">
+        <div class="rec-icon">🛡️</div>
+        <div class="rec-title nl-block">Alle lagen — maximale privacy</div>
+        <div class="rec-title en-block">All layers — maximum privacy</div>
+        <div class="rec-desc nl-block">Vangt alles: namen, medisch, fysieke beschrijvingen, contextuele PII. Ideaal als NSE-data herleidbaar kan zijn naar individuen.</div>
+        <div class="rec-desc en-block">Catches everything: names, medical, physical descriptions, contextual PII. Ideal when NSE data could be traceable to individuals.</div>
+        <div class="rec-tag">L1 + L2 + L3 (aya-expanse:8b)</div>
+        <div style="margin-top:10px; font-size:11px; color:var(--muted); display:flex; align-items:center; gap:6px;">
+          <span style="font-family:'JetBrains Mono',monospace; background:var(--purple-dim); color:var(--purple); border:1px solid rgba(167,139,250,0.25); padding:2px 7px; border-radius:3px; font-size:10px; font-weight:700;">k ≥ 15</span>
+          <span class="nl-block">Groepen onder 15 respondenten worden niet getoond</span>
+          <span class="en-block">Groups below 15 respondents are not shown</span>
+        </div>
+      </div>
+      <div class="rec-card">
+        <div class="rec-icon">⚡</div>
+        <div class="rec-title nl-block">Laag 1 + 2 — snelle eerste stap</div>
+        <div class="rec-title en-block">Layer 1 + 2 — fast first step</div>
+        <div class="rec-desc nl-block">Geen LLM, razendsnel en reproduceerbaar. Als jullie nu al alle ruwe data zien, is dit al een enorme verbetering. Mist fysieke beschrijvingen.</div>
+        <div class="rec-desc en-block">No LLM, blazing fast and reproducible. If you currently see all raw data, this is already a huge improvement. Misses physical descriptions.</div>
+        <div class="rec-tag a">L1 + L2 · ~1.6s / 13 rijen</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <div class="footer-left">
+      <span class="nl-block">Fontys Hogescholen · NSE Privacy Officer · Semester 4</span>
+      <span class="en-block">Fontys University · NSE Privacy Officer · Semester 4</span>
+    </div>
+    <div class="footer-right">
+      <span class="ftag">100% offline</span>
+      <span class="ftag">Docker · FastAPI · Ollama</span>
+      <span class="ftag">aya-expanse:8b</span>
+      <span class="ftag nl-block">In ontwikkeling — meer modellen & rijen volgen</span>
+      <span class="ftag en-block">In development — more models & rows to follow</span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  function setLang(lang) {
+    document.body.classList.toggle('en', lang === 'en');
+    document.querySelectorAll('.lang-btn').forEach(b => {
+      b.classList.toggle('active', b.textContent === lang.toUpperCase());
+    });
+  }
+
+  function switchEx(idx) {
+    document.querySelectorAll('.ex-panel').forEach((p, i) => p.classList.toggle('active', i === idx));
+    document.querySelectorAll('.ex-tab').forEach((t, i) => t.classList.toggle('active', i === idx));
+  }
+</script>
+
+</body>
+</html>

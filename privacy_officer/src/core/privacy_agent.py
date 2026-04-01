@@ -3,6 +3,7 @@ import re
 import json
 from typing import Optional, Set
 import ollama
+from openai import OpenAI
 import pandas as pd
 from tqdm import tqdm
 import logging
@@ -17,12 +18,22 @@ from transformers import pipeline as hf_pipeline
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Read OLLAMA_HOST from env so it works both locally and in Docker.
-# Locally: defaults to http://localhost:11434
-# Docker:  docker-compose sets OLLAMA_HOST=http://host.docker.internal:11434
+# LLM_BACKEND selects which inference server to use: "vllm" (default) or "ollama".
+LLM_BACKEND = os.getenv('LLM_BACKEND', 'vllm')
+
+# vLLM — OpenAI-compatible API server. Defaults work for Docker Compose setup.
+VLLM_HOST = os.getenv('VLLM_HOST', 'http://localhost:8001')
+vllm_client = OpenAI(base_url=f"{VLLM_HOST}/v1", api_key="not-needed")
+
+# Ollama — kept as fallback backend.
 OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
-client = ollama.Client(host=OLLAMA_HOST)
-logging.info(f"Connecting to Ollama at: {OLLAMA_HOST}")
+ollama_client = ollama.Client(host=OLLAMA_HOST)
+
+logging.info(f"LLM backend: {LLM_BACKEND}")
+if LLM_BACKEND == 'vllm':
+    logging.info(f"Connecting to vLLM at: {VLLM_HOST}")
+else:
+    logging.info(f"Connecting to Ollama at: {OLLAMA_HOST}")
 
 # Initialize Presidio multi-language NLP engine
 logging.info("Initializing Microsoft Presidio NLP engines (this may take a moment)...")
@@ -339,16 +350,26 @@ def anonymize_text(
     if layers is None or "3" in layers:
         try:
             prompt_str = get_dynamic_prompt(config)
+            messages = [
+                {"role": "system", "content": prompt_str},
+                {"role": "user", "content": eu_pii_anonymized},
+            ]
 
             # Step 3: LLM — catches indirect/contextual PII that NER layers missed
-            response = client.chat(model=model_name, messages=[
-                {"role": "system", "content": prompt_str},
-                {"role": "user", "content": eu_pii_anonymized}
-                ], format="json")
+            if LLM_BACKEND == 'vllm':
+                completion = vllm_client.chat.completions.create(
+                    model=model_name,
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                )
+                raw_content = completion.choices[0].message.content.strip()
+            else:
+                response = ollama_client.chat(model=model_name, messages=messages, format="json")
+                raw_content = response['message']['content'].strip()
 
             # safely parse the json response
             try:
-                extracted_entities = json.loads(response['message']['content'].strip())
+                extracted_entities = json.loads(raw_content)
             except json.JSONDecodeError:
                 logging.error(f"Failed to parse JSON for input: {text[:30]}")
                 return f"[NEEDS_REVIEW_ERROR] {text}"

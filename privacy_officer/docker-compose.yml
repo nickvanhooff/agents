@@ -7,12 +7,48 @@ services:
       - .:/app
       - huggingface_cache:/root/.cache/huggingface
     environment:
+      - LLM_BACKEND=${LLM_BACKEND:-vllm}
+      - VLLM_HOST=http://vllm:8000
+      - VLLM_MODEL=${VLLM_MODEL:-Qwen/Qwen2.5-1.5B-Instruct}
       - OLLAMA_HOST=http://ollama:11434
-      - OLLAMA_MODEL=${OLLAMA_MODEL}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-aya-expanse:8b}
       - PYTHONUNBUFFERED=1
     depends_on:
-      - ollama
+      vllm:
+        condition: service_healthy
 
+  vllm:
+    image: vllm/vllm-openai:latest
+    ports:
+      - "8001:8000"  # host:container — access from host at http://localhost:8001/v1
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+    command: >
+      --model ${VLLM_MODEL:-Qwen/Qwen2.5-1.5B-Instruct}
+      --host 0.0.0.0
+      --port 8000
+      --dtype auto
+      --max-model-len 4096
+      --gpu-memory-utilization 0.75
+      --enforce-eager
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ipc: host  # vLLM requires shared memory access between processes
+
+  # Keep Ollama available as fallback (set LLM_BACKEND=ollama to use)
   ollama:
     image: ollama/ollama
     ports:
@@ -28,6 +64,8 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    profiles:
+      - ollama  # only starts when: docker compose --profile ollama up
 
 volumes:
   ollama_data:

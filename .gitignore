@@ -17,7 +17,7 @@ build/
 
 # Data files (uploaded/processed CSVs)
 privacy_officer/uploads/
-*.csv
+
 
 # IDE & OS
 .vscode/
