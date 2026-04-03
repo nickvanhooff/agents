@@ -10,7 +10,7 @@ import shutil
 from pathlib import Path
 
 # Important: we import our core offline Privacy Agent
-from src.core.privacy_agent import process_dataframe
+from src.core.privacy_agent import process_dataframe_async
 
 app = FastAPI(title="Fontys Privacy Officer Agent")
 
@@ -106,8 +106,8 @@ async def anonymize_csv(
     else:
         model_name = os.getenv('OLLAMA_MODEL', 'aya-expanse:8b')
     
-    # We pass progress_state to process_dataframe so it can update it in real-time
-    processed_df = process_dataframe(df, text_column=text_column, model_name=model_name, config=config, progress_state=progress_state, layers=layers_set)
+    # We pass progress_state to process_dataframe_async so it can update it in real-time
+    processed_df = await process_dataframe_async(df, text_column=text_column, model_name=model_name, config=config, progress_state=progress_state, layers=layers_set)
     
     # 3. Export to a new CSV file
     processed_df.to_csv(output_path, index=False)

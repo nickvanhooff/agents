@@ -1,9 +1,10 @@
 import os
 import re
 import json
+import asyncio
 from typing import Optional, Set
 import ollama
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 import pandas as pd
 from tqdm import tqdm
 import logging
@@ -24,6 +25,7 @@ LLM_BACKEND = os.getenv('LLM_BACKEND', 'vllm')
 # vLLM — OpenAI-compatible API server. Defaults work for Docker Compose setup.
 VLLM_HOST = os.getenv('VLLM_HOST', 'http://localhost:8001')
 vllm_client = OpenAI(base_url=f"{VLLM_HOST}/v1", api_key="not-needed")
+vllm_async_client = AsyncOpenAI(base_url=f"{VLLM_HOST}/v1", api_key="not-needed")
 
 # Ollama — kept as fallback backend.
 OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
@@ -361,6 +363,7 @@ def anonymize_text(
                     model=model_name,
                     messages=messages,
                     response_format={"type": "json_object"},
+                    temperature=0,
                 )
                 raw_content = completion.choices[0].message.content.strip()
             else:
@@ -411,6 +414,145 @@ def anonymize_text(
             return f"[NEEDS_REVIEW_ERROR] {text}"
     else:
         return eu_pii_anonymized
+
+async def anonymize_text_async(
+    text: str,
+    model_name: str = 'aya-expanse:8b',
+    config: Optional[dict] = None,
+    layers: Optional[Set[str]] = None
+) -> str:
+    """Async version of anonymize_text. Layers 1+2 run sync; layer 3 LLM call is awaited."""
+    if not isinstance(text, str) or not text.strip():
+        return text
+
+    # Layer 1: Presidio (sync, fast)
+    if layers is None or "1" in layers:
+        try:
+            try:
+                lang = detect(text)
+                if lang not in ["nl", "en"]:
+                    lang = "nl"
+            except LangDetectException:
+                lang = "nl"
+            results = analyzer.analyze(text=text, language=lang)
+            operators = build_presidio_operators(config)
+            anonymized_result = anonymizer.anonymize(text=text, analyzer_results=results, operators=operators)
+            presidio_anonymized = anonymized_result.text
+        except Exception as e:
+            logging.error(f"Presidio error on '{text[:30]}...': {e}")
+            presidio_anonymized = text
+    else:
+        presidio_anonymized = text
+
+    if config and not any(config.values()):
+        return text
+
+    # Layer 2: EU-PII-Safeguard (sync, fast)
+    if layers is None or "2" in layers:
+        eu_pii_anonymized = eu_pii_safeguard_anonymize(presidio_anonymized, config)
+    else:
+        eu_pii_anonymized = presidio_anonymized
+
+    # Layer 3: LLM (async I/O)
+    if layers is None or "3" in layers:
+        try:
+            prompt_str = get_dynamic_prompt(config)
+            messages = [
+                {"role": "system", "content": prompt_str},
+                {"role": "user", "content": eu_pii_anonymized},
+            ]
+
+            if LLM_BACKEND == 'vllm':
+                completion = await vllm_async_client.chat.completions.create(
+                    model=model_name,
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    temperature=0,
+                )
+                raw_content = completion.choices[0].message.content.strip()
+            else:
+                response = await asyncio.to_thread(
+                    ollama_client.chat, model=model_name, messages=messages, format="json"
+                )
+                raw_content = response['message']['content'].strip()
+
+            try:
+                extracted_entities = json.loads(raw_content)
+            except json.JSONDecodeError:
+                logging.error(f"Failed to parse JSON for input: {text[:30]}")
+                return f"[NEEDS_REVIEW_ERROR] {text}"
+
+            anonymized = eu_pii_anonymized
+            tag_map = {
+                "names": "[NAME]",
+                "titles": "[TITLE]",
+                "locations": "[LOCATION]",
+                "courses": "[COURSE/DEPT]",
+                "pii": "[PII]",
+                "physical": "[PHYSICAL_DESCRIPTOR]"
+            }
+
+            llm_replaced = []
+            for category, entities in extracted_entities.items():
+                if isinstance(entities, list) and category in tag_map:
+                    tag = tag_map[category]
+                    entities.sort(key=len, reverse=True)
+                    for entity in entities:
+                        if isinstance(entity, str) and entity and entity in anonymized:
+                            pattern = re.compile(re.escape(entity), re.IGNORECASE)
+                            new_anonymized = pattern.sub(tag, anonymized)
+                            if new_anonymized != anonymized:
+                                llm_replaced.append(f"'{entity}' ({category} → {tag})")
+                                anonymized = new_anonymized
+
+            if llm_replaced:
+                logging.info(f"LLM caught {len(llm_replaced)} additional entities: {', '.join(llm_replaced)}")
+
+            return anonymized
+
+        except Exception as e:
+            logging.error(f"LLM error on '{text[:30]}...': {e}")
+            return f"[NEEDS_REVIEW_ERROR] {text}"
+    else:
+        return eu_pii_anonymized
+
+
+async def process_dataframe_async(
+    df: pd.DataFrame,
+    text_column: str,
+    model_name: str = 'aya-expanse:8b',
+    config: Optional[dict] = None,
+    progress_state: Optional[dict] = None,
+    layers: Optional[Set[str]] = None,
+    batch_size: int = 5
+) -> pd.DataFrame:
+    """Async version of process_dataframe. Processes rows in concurrent batches of batch_size."""
+    logging.info(f"Starting async anonymization using model: {model_name}. Total rows: {len(df)}, batch size: {batch_size}")
+    processed_df = df.copy()
+    texts = processed_df[text_column].tolist()
+    total_rows = len(texts)
+    anonymized_texts = []
+
+    for batch_start in range(0, total_rows, batch_size):
+        batch = texts[batch_start:batch_start + batch_size]
+        tasks = [anonymize_text_async(text, model_name, config, layers) for text in batch]
+        results = await asyncio.gather(*tasks)
+        anonymized_texts.extend(results)
+
+        done = min(batch_start + batch_size, total_rows)
+        if progress_state is not None:
+            progress_state["percentage"] = int(done / total_rows * 100)
+            progress_state["status"] = f"Processing items {batch_start + 1}–{done} of {total_rows}..."
+
+    processed_df[f'anonymized_{text_column}'] = anonymized_texts
+
+    if progress_state is not None:
+        progress_state["percentage"] = 100
+        progress_state["status"] = "Completed!"
+
+    logging.info("Async anonymization process completed.")
+    return processed_df
+
 
 def process_dataframe(
     df: pd.DataFrame,
