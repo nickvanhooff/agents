@@ -206,6 +206,22 @@
                 </div>
             </div>
 
+            <div class="form-group">
+                <label>5. Recall Check <span style="font-size:11px; font-weight:normal; color:#6c757d;">(alleen voor testdatasets met een PII-referentiekolom)</span></label>
+                <div class="settings-grid" style="grid-template-columns: 1fr;">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="run_check" name="run_check_toggle">
+                        <label for="run_check" style="margin:0; font-weight:normal;">Controleer recall na anonimisering</label>
+                    </div>
+                    <div id="checkOptions" style="display:none; margin-top:8px;">
+                        <label for="pii_ref_col" style="font-size:13px; font-weight:normal; margin-bottom:4px; display:block;">Naam van de PII-referentiekolom:</label>
+                        <input type="text" id="pii_ref_col" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:4px; box-sizing:border-box;"
+                               value="voorkomende tekst van pii of indirect wat eruit gehaald moet worden">
+                        <span class="form-hint">Kolom met waarden als <code>naam:Smith, email:j.smith@fontys.nl</code></span>
+                    </div>
+                </div>
+            </div>
+
             <button type="submit" id="submitBtn">Start Local Anonymization</button>
         </form>
 
@@ -217,6 +233,11 @@
     </div>
 
     <script>
+        // Toggle recall check options visibility
+        document.getElementById('run_check').addEventListener('change', function() {
+            document.getElementById('checkOptions').style.display = this.checked ? 'block' : 'none';
+        });
+
         document.getElementById('uploadForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             
@@ -258,6 +279,11 @@
                 const cb = document.getElementById(id);
                 if (cb && cb.checked) formData.append('layers', cb.value);
             }
+            const runCheck = document.getElementById('run_check').checked;
+            formData.append('run_check', runCheck);
+            if (runCheck) {
+                formData.append('pii_reference_column', document.getElementById('pii_ref_col').value);
+            }
 
             // Connect to Server-Sent Events for progress
             const eventSource = new EventSource('/api/progress');
@@ -278,15 +304,84 @@
                     body: formData
                 });
 
-                const result = await response.json();
+                let result;
+                const contentType = response.headers.get('content-type') || '';
+                if (contentType.includes('application/json')) {
+                    result = await response.json();
+                } else {
+                    const text = await response.text();
+                    throw new Error(`Server error ${response.status}: ${text.slice(0, 200)}`);
+                }
 
                 if(response.ok) {
                     let warningHtml = "";
                     if (result.flagged_count > 0) {
                         warningHtml = `<div style="margin-top: 15px; padding: 10px; background-color: #fff3cd; color: #856404; border-radius: 5px; border: 1px solid #ffeeba;">
-                            <strong>⚠️ Let op:</strong> ${result.flagged_count} item(s) zijn gemarkeerd voor menselijke controle (bijv. doordat de AI weigerde). 
+                            <strong>⚠️ Let op:</strong> ${result.flagged_count} item(s) zijn gemarkeerd voor menselijke controle (bijv. doordat de AI weigerde).
                             Deze beginnen met <code>[NEEDS_REVIEW_...]</code> in de gedownloade CSV.
                         </div>`;
+                    }
+
+                    let checkHtml = "";
+                    if (result.check) {
+                        const c = result.check;
+                        if (c.error) {
+                            checkHtml = `<div style="margin-top:15px; padding:10px; background:#fff3cd; color:#856404; border-radius:5px; border:1px solid #ffeeba;">
+                                <strong>⚠️ Recall check:</strong> ${c.error}
+                            </div>`;
+                        } else {
+                            const recallColor = c.recall >= 90 ? '#155724' : c.recall >= 70 ? '#856404' : '#721c24';
+                            const recallBg    = c.recall >= 90 ? '#d4edda' : c.recall >= 70 ? '#fff3cd' : '#f8d7da';
+                            let themeRows = c.per_theme.map(t => {
+                                const pct = Math.round(t.score / t.total * 100);
+                                const bg  = pct === 100 ? '#d4edda' : pct >= 70 ? '#fff3cd' : '#f8d7da';
+                                const fpBadge = (t.false_positives > 0)
+                                    ? ` <span style="background:#fff3cd; color:#7D4E00; border-radius:3px; padding:1px 5px; font-size:11px;">+${t.false_positives} extra</span>`
+                                    : '';
+                                return `<tr style="background:${bg}">
+                                    <td style="padding:4px 8px">${t.theme}${fpBadge}</td>
+                                    <td style="padding:4px 8px; text-align:center">${t.score}/${t.total}</td>
+                                    <td style="padding:4px 8px; text-align:center">${pct}%</td>
+                                </tr>`;
+                            }).join('');
+                            let missedList = c.top_missed.length
+                                ? c.top_missed.map(m => `<li><code>${m.value}</code> (${m.count}x)</li>`).join('')
+                                : '<li>Geen — alles geanonimiseerd!</li>';
+                            let extrasList = (c.top_extras && c.top_extras.length)
+                                ? c.top_extras.map(e => `<li><code>${e.value}</code> (${e.count}x)</li>`).join('')
+                                : '<li>Geen onverwachte vervangingen gevonden.</li>';
+                            const extrasBadge = c.extra_count > 0
+                                ? `<span style="margin-left:12px; font-size:13px; color:#7D4E00; background:#fff3cd; padding:2px 8px; border-radius:4px;">⚠️ ${c.extra_count} rij(en) met onverwachte vervangingen</span>`
+                                : `<span style="margin-left:12px; font-size:13px; color:#155724; background:#d4edda; padding:2px 8px; border-radius:4px;">✔ Geen false positives</span>`;
+                            checkHtml = `
+                            <div style="margin-top:15px; padding:15px; background:${recallBg}; border-radius:5px; border:1px solid #ccc;">
+                                <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
+                                    <strong style="color:${recallColor}; font-size:16px;">
+                                        📊 Recall: ${c.recall}% &nbsp;(${c.fully_anonymized}/${c.total} rijen volledig geanonimiseerd)
+                                    </strong>
+                                    ${extrasBadge}
+                                </div>
+                                <details style="margin-top:10px;">
+                                    <summary style="cursor:pointer; font-weight:bold;">Per thema</summary>
+                                    <table style="width:100%; border-collapse:collapse; margin-top:8px; font-size:13px;">
+                                        <thead><tr style="background:#1F3864; color:white">
+                                            <th style="padding:4px 8px; text-align:left">Thema</th>
+                                            <th style="padding:4px 8px">Score</th>
+                                            <th style="padding:4px 8px">Recall</th>
+                                        </tr></thead>
+                                        <tbody>${themeRows}</tbody>
+                                    </table>
+                                </details>
+                                <details style="margin-top:8px;">
+                                    <summary style="cursor:pointer; font-weight:bold;">Meest gemiste PII-waarden (false negatives)</summary>
+                                    <ul style="margin:8px 0; padding-left:20px; font-size:13px;">${missedList}</ul>
+                                </details>
+                                <details style="margin-top:8px;">
+                                    <summary style="cursor:pointer; font-weight:bold;">Onverwachte vervangingen (false positives)</summary>
+                                    <ul style="margin:8px 0; padding-left:20px; font-size:13px;">${extrasList}</ul>
+                                </details>
+                            </div>`;
+                        }
                     }
 
                     statusDiv.className = 'status success';
@@ -296,6 +391,7 @@
                         <br><br>
                         <a href="${result.download_url}" class="download-btn" download>📥 Download Anonymized CSV</a>
                         ${warningHtml}
+                        ${checkHtml}
                     `;
                     progressText.textContent = 'Process finished successfully!';
                 } else {

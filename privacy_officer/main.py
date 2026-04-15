@@ -1,6 +1,7 @@
+import asyncio
 import logging
 from src.core.data_loader import load_data
-from src.core.privacy_agent import process_dataframe
+from src.core.privacy_agent import process_dataframe_async
 from src.core.data_exporter import export_data
 
 # Configure root logger
@@ -31,7 +32,7 @@ def main():
 
         # Step 2: Processing (Agent Logic)
         logger.info("STEP 2: Anonymizing Data")
-        processed_df = process_dataframe(df, text_column=TEXT_COLUMN_TO_ANONYMIZE, model_name=MODEL_NAME)
+        processed_df = asyncio.run(process_dataframe_async(df, text_column=TEXT_COLUMN_TO_ANONYMIZE, model_name=MODEL_NAME))
 
         # Step 3: Export
         logger.info("STEP 3: Exporting Data")

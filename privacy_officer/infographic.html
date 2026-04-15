@@ -76,20 +76,6 @@
     color: #fff;
   }
 
-  /* Hide/show language content */
-  [data-lang="en"] { display: none; }
-  body.en [data-lang="nl"] { display: none; }
-  body.en [data-lang="en"] { display: contents; }
-  /* For block elements */
-  .nl-block { display: block; }
-  .en-block { display: none; }
-  body.en .nl-block { display: none; }
-  body.en .en-block { display: block; }
-  .nl-flex { display: flex; }
-  .en-flex { display: none; }
-  body.en .nl-flex { display: none; }
-  body.en .en-flex { display: flex; }
-
   .page {
     max-width: 1100px;
     margin: 0 auto;
@@ -420,11 +406,14 @@
   .rec-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:22px; position:relative; overflow:hidden; }
   .rec-card.featured { border-color:rgba(16,185,129,0.35); background:linear-gradient(135deg,rgba(16,185,129,0.05),var(--surface)); }
   .rec-card.featured::after {
-    content: attr(data-badge);
+    content: attr(data-badge-nl);
     position:absolute; top:14px; right:14px;
     font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700; letter-spacing:.1em;
     color:var(--mint); background:var(--mint-dim); border:1px solid rgba(16,185,129,0.25);
     padding:2px 7px; border-radius:3px;
+  }
+  body.en .rec-card.featured::after {
+    content: attr(data-badge-en);
   }
   .rec-icon { font-size:24px; margin-bottom:10px; }
   .rec-title { font-weight:700; font-size:15px; color:#fff; margin-bottom:6px; }
@@ -457,6 +446,19 @@
   .a2{animation:fadeUp .5s .15s both}
   .a3{animation:fadeUp .5s .25s both}
   .a4{animation:fadeUp .5s .35s both}
+
+  /* Language toggle — last so they override component display values */
+  [data-lang="en"] { display: none; }
+  body.en [data-lang="nl"] { display: none; }
+  body.en [data-lang="en"] { display: contents; }
+  .nl-block { display: block !important; }
+  .en-block { display: none !important; }
+  body.en .nl-block { display: none !important; }
+  body.en .en-block { display: block !important; }
+  .nl-flex { display: flex !important; }
+  .en-flex { display: none !important; }
+  body.en .nl-flex { display: none !important; }
+  body.en .en-flex { display: flex !important; }
 </style>
 </head>
 <body>
@@ -613,7 +615,7 @@
       <div class="pipe-step">
         <span class="step-tag t-l3">L3</span>
         <div class="pipe-name">Ollama LLM</div>
-        <div class="pipe-tech">aya-expanse:8b · lokaal</div>
+        <div class="pipe-tech">aya-expanse:8b · <span class="nl-block" style="display:inline">lokaal</span><span class="en-block" style="display:none">local</span></div>
         <ul class="pipe-list">
           <li class="nl-block">Fysieke beschrijvingen</li>
           <li class="en-block">Physical descriptors</li>
@@ -865,19 +867,22 @@
         <div class="speed-label">L1 — Presidio</div>
         <div class="speed-bar-bg"><div class="speed-bar" style="width:0.3%;background:var(--blue)"></div></div>
         <div class="speed-time">0.25s</div>
-        <div class="speed-sub">≈ 0.02 sec/row</div>
+        <div class="speed-sub nl-block">≈ 0.02 sec/rij</div>
+        <div class="speed-sub en-block">≈ 0.02 sec/row</div>
       </div>
       <div class="speed-card">
         <div class="speed-label">L1 + L2</div>
         <div class="speed-bar-bg"><div class="speed-bar" style="width:1.6%;background:var(--amber)"></div></div>
         <div class="speed-time">1.6s</div>
-        <div class="speed-sub">≈ 0.12 sec/row</div>
+        <div class="speed-sub nl-block">≈ 0.12 sec/rij</div>
+        <div class="speed-sub en-block">≈ 0.12 sec/row</div>
       </div>
       <div class="speed-card" style="border-color:rgba(16,185,129,0.3)">
         <div class="speed-label"><span class="nl-block">Alle lagen</span><span class="en-block">All layers</span></div>
         <div class="speed-bar-bg"><div class="speed-bar" style="width:100%;background:linear-gradient(90deg,var(--blue),var(--purple),var(--mint))"></div></div>
         <div class="speed-time">~1:41 min</div>
-        <div class="speed-sub">≈ 7.8 sec/row · LLM domineert</div>
+        <div class="speed-sub nl-block">≈ 7.8 sec/rij · LLM domineert</div>
+        <div class="speed-sub en-block">≈ 7.8 sec/row · LLM dominates</div>
         <div class="speed-note nl-block">Hoogste privacy-bescherming</div>
         <div class="speed-note en-block">Highest privacy protection</div>
       </div>
@@ -902,7 +907,7 @@
     <h2 class="sec-title en-block">Which configuration?</h2>
 
     <div class="rec-grid">
-      <div class="rec-card featured" data-badge="AANBEVOLEN / RECOMMENDED">
+      <div class="rec-card featured" data-badge-nl="AANBEVOLEN" data-badge-en="RECOMMENDED">
         <div class="rec-icon">🛡️</div>
         <div class="rec-title nl-block">Alle lagen — maximale privacy</div>
         <div class="rec-title en-block">All layers — maximum privacy</div>

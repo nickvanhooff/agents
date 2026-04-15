@@ -6,9 +6,7 @@ from typing import Optional, Set
 import ollama
 from openai import OpenAI, AsyncOpenAI
 import pandas as pd
-from tqdm import tqdm
 import logging
-import time
 from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_anonymizer import AnonymizerEngine
@@ -29,13 +27,16 @@ vllm_async_client = AsyncOpenAI(base_url=f"{VLLM_HOST}/v1", api_key="not-needed"
 
 # Ollama — kept as fallback backend.
 OLLAMA_HOST = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
-ollama_client = ollama.Client(host=OLLAMA_HOST)
+# httpx (used by ollama-python) defaults to ~60s read timeout if unset, which aborts
+# /api/chat while the server is still loading a large model into VRAM (see Ollama logs: 1m0s).
+OLLAMA_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "600"))
+ollama_client = ollama.Client(host=OLLAMA_HOST, timeout=OLLAMA_TIMEOUT_SECONDS)
 
 logging.info(f"LLM backend: {LLM_BACKEND}")
 if LLM_BACKEND == 'vllm':
     logging.info(f"Connecting to vLLM at: {VLLM_HOST}")
 else:
-    logging.info(f"Connecting to Ollama at: {OLLAMA_HOST}")
+    logging.info(f"Connecting to Ollama at: {OLLAMA_HOST} (HTTP timeout {OLLAMA_TIMEOUT_SECONDS}s)")
 
 # Initialize Presidio multi-language NLP engine
 logging.info("Initializing Microsoft Presidio NLP engines (this may take a moment)...")
@@ -256,6 +257,46 @@ def eu_pii_safeguard_anonymize(text: str, config: dict = None) -> str:
     return result
 
 
+def parse_llm_json_response(raw: str) -> Optional[dict]:
+    """
+    Parse a JSON object from LLM output. Qwen/Ollama usually return clean JSON; Gemma and others
+    may wrap content in markdown fences or add prose despite format=\"json\".
+    """
+    if not raw or not str(raw).strip():
+        return None
+    s = str(raw).strip()
+
+    def _try_load(fragment: str) -> Optional[dict]:
+        try:
+            obj = json.loads(fragment)
+            return obj if isinstance(obj, dict) else None
+        except json.JSONDecodeError:
+            return None
+
+    direct = _try_load(s)
+    if direct is not None:
+        return direct
+
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", s, re.IGNORECASE)
+    if fence:
+        inner = _try_load(fence.group(1).strip())
+        if inner is not None:
+            logging.info("Parsed LLM JSON from markdown code fence (model returned extra wrapping).")
+            return inner
+
+    start = s.find("{")
+    if start >= 0:
+        try:
+            obj, _ = json.JSONDecoder().raw_decode(s[start:])
+            if isinstance(obj, dict):
+                logging.info("Parsed LLM JSON via raw_decode (leading/trailing non-JSON text stripped).")
+                return obj
+        except json.JSONDecodeError:
+            pass
+
+    return None
+
+
 def get_dynamic_prompt(config: dict = None) -> str:
     """Builds a strict JSON extraction prompt based on user settings."""
     prompt = """You are a strict data extraction tool. Your ONLY job is to extract identifying entities from the text.
@@ -278,142 +319,28 @@ If no matches are found for a category, return an empty array [] for that key.
     if not config or config.get("physical", True):
         prompt += "- 'physical': Physical appearance details identifying a person (e.g., kaal, baard, rode jas)\n"
 
-    prompt += """
-=== STRICT RULES ===
-1. The strings in your JSON arrays MUST be EXACT substrings from the input text. Do not correct spelling or alter capitalization.
-2. DO NOT extract generic words (like 'workshop', 'bibliotheek', 'kantine', 'eten', 'voeten', 'blij'). 
-3. DO NOT extract standalone numbers or grades (like '1', '4', '8.5').
-4. The output must be parsable by Python's json.loads().
-"""
+    prompt += "\n=== STRICT RULES ===\n"
+    prompt += "1. The strings in your JSON arrays MUST be EXACT substrings from the input text. Do not correct spelling or alter capitalization.\n"
+    prompt += "2. DO NOT extract generic words (like 'workshop', 'bibliotheek', 'kantine', 'eten', 'voeten', 'blij').\n"
+    prompt += "3. DO NOT extract standalone numbers or grades (like '1', '4', '8.5').\n"
+    prompt += "4. The output must be parsable by Python's json.loads().\n"
+
+    # Explicit prohibitions for disabled categories so the LLM doesn't smuggle them into other categories
+    if config and not config.get("titles", True):
+        prompt += "5. DO NOT extract honorifics or titles (Meneer, Mevrouw, Dhr., Mevr., Dr., docent, mentor, coach, begeleider, professor) — not even as part of a name string.\n"
+    if config and not config.get("names", True):
+        prompt += "6. DO NOT extract personal names of any kind.\n"
+    if config and not config.get("locations", True):
+        prompt += "7. DO NOT extract locations, cities, campuses or street names.\n"
+    if config and not config.get("physical", True):
+        prompt += "8. DO NOT extract physical appearance details.\n"
+    if config and not config.get("courses", True):
+        prompt += "9. DO NOT extract course names or department names.\n"
     return prompt
 
 # Accepted layer IDs: "1"=Presidio, "2"=EU-PII-Safeguard, "3"=LLM. None = all layers.
 VALID_LAYER_IDS: Set[str] = {"1", "2", "3"}
 
-
-def anonymize_text(
-    text: str,
-    model_name: str = 'aya-expanse:8b',
-    config: Optional[dict] = None,
-    layers: Optional[Set[str]] = None
-) -> str:
-    """Anonymize text using selected layers. layers=None runs all layers; otherwise only IDs in layers (e.g. {'1','3'})."""
-    if not isinstance(text, str) or not text.strip():
-        return text
-
-    # Step 1: Microsoft Presidio (Deterministic Regex/NER)
-    if layers is None or "1" in layers:
-        try:
-            # Try to detect language, default to Dutch since data is mostly Dutch
-            try:
-                lang = detect(text)
-                if lang not in ["nl", "en"]:
-                    lang = "nl"
-            except LangDetectException:
-                lang = "nl"
-
-            results = analyzer.analyze(text=text, language=lang)
-
-            # Build operators from central config; respects user toggles (names, locations, pii)
-            operators = build_presidio_operators(config)
-
-            anonymized_result = anonymizer.anonymize(
-                text=text,
-                analyzer_results=results,
-                operators=operators
-            )
-            presidio_anonymized = anonymized_result.text
-
-            if results:
-                entities_desc = [f"'{text[r.start:r.end]}' ({r.entity_type})" for r in results]
-                type_counts = {}
-                for r in results:
-                    type_counts[r.entity_type] = type_counts.get(r.entity_type, 0) + 1
-                logging.info(f"Presidio caught {len(results)} entities: {', '.join(entities_desc)}")
-                logging.info(f"Presidio by type: {type_counts}")
-                logging.info(f"Presidio output: '{presidio_anonymized}'")
-
-        except Exception as e:
-            logging.error(f"Presidio error on '{text[:30]}...': {e}")
-            presidio_anonymized = text
-    else:
-        presidio_anonymized = text
-
-    # If everything is turned off, just return original text
-    if config and not any(config.values()):
-        return text
-
-    # Step 2: eu-pii-safeguard — catches named entities Presidio missed
-    if layers is None or "2" in layers:
-        eu_pii_anonymized = eu_pii_safeguard_anonymize(presidio_anonymized, config)
-    else:
-        eu_pii_anonymized = presidio_anonymized
-
-    if layers is None or "3" in layers:
-        try:
-            prompt_str = get_dynamic_prompt(config)
-            messages = [
-                {"role": "system", "content": prompt_str},
-                {"role": "user", "content": eu_pii_anonymized},
-            ]
-
-            # Step 3: LLM — catches indirect/contextual PII that NER layers missed
-            if LLM_BACKEND == 'vllm':
-                completion = vllm_client.chat.completions.create(
-                    model=model_name,
-                    messages=messages,
-                    response_format={"type": "json_object"},
-                    temperature=0,
-                )
-                raw_content = completion.choices[0].message.content.strip()
-            else:
-                response = ollama_client.chat(model=model_name, messages=messages, format="json")
-                raw_content = response['message']['content'].strip()
-
-            # safely parse the json response
-            try:
-                extracted_entities = json.loads(raw_content)
-            except json.JSONDecodeError:
-                logging.error(f"Failed to parse JSON for input: {text[:30]}")
-                return f"[NEEDS_REVIEW_ERROR] {text}"
-
-            anonymized = eu_pii_anonymized
-
-            # We sort by length descending to replace larger phrases before smaller overlaps
-            tag_map = {
-                "names": "[NAME]",
-                "titles": "[TITLE]",
-                "locations": "[LOCATION]",
-                "courses": "[COURSE/DEPT]",
-                "pii": "[PII]",
-                "physical": "[PHYSICAL_DESCRIPTOR]"
-            }
-
-            llm_replaced = []
-            for category, entities in extracted_entities.items():
-                if isinstance(entities, list) and category in tag_map:
-                    tag = tag_map[category]
-                    # Sort descending length so "John Doe" replaces before "John"
-                    entities.sort(key=len, reverse=True)
-                    for entity in entities:
-                        if isinstance(entity, str) and entity and entity in anonymized:
-                            # Case insensitive replacement via regex but preserving case of other words
-                            pattern = re.compile(re.escape(entity), re.IGNORECASE)
-                            new_anonymized = pattern.sub(tag, anonymized)
-                            if new_anonymized != anonymized:
-                                llm_replaced.append(f"'{entity}' ({category} → {tag})")
-                                anonymized = new_anonymized
-
-            if llm_replaced:
-                logging.info(f"LLM caught {len(llm_replaced)} additional entities: {', '.join(llm_replaced)}")
-
-            return anonymized
-
-        except Exception as e:
-            logging.error(f"LLM error on '{text[:30]}...': {e}")
-            return f"[NEEDS_REVIEW_ERROR] {text}"
-    else:
-        return eu_pii_anonymized
 
 async def anonymize_text_async(
     text: str,
@@ -471,14 +398,16 @@ async def anonymize_text_async(
                 )
                 raw_content = completion.choices[0].message.content.strip()
             else:
-                response = await asyncio.to_thread(
-                    ollama_client.chat, model=model_name, messages=messages, format="json"
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        ollama_client.chat, model=model_name, messages=messages, format="json"
+                    ),
+                    timeout=OLLAMA_TIMEOUT_SECONDS,
                 )
                 raw_content = response['message']['content'].strip()
 
-            try:
-                extracted_entities = json.loads(raw_content)
-            except json.JSONDecodeError:
+            extracted_entities = parse_llm_json_response(raw_content)
+            if extracted_entities is None:
                 logging.error(f"Failed to parse JSON for input: {text[:30]}")
                 return f"[NEEDS_REVIEW_ERROR] {text}"
 
@@ -510,6 +439,11 @@ async def anonymize_text_async(
 
             return anonymized
 
+        except asyncio.TimeoutError:
+            logging.error(
+                f"Ollama timeout after {OLLAMA_TIMEOUT_SECONDS}s on '{text[:30]}...'"
+            )
+            return f"[NEEDS_REVIEW_TIMEOUT] {text}"
         except Exception as e:
             logging.error(f"LLM error on '{text[:30]}...': {e}")
             return f"[NEEDS_REVIEW_ERROR] {text}"
@@ -524,7 +458,7 @@ async def process_dataframe_async(
     config: Optional[dict] = None,
     progress_state: Optional[dict] = None,
     layers: Optional[Set[str]] = None,
-    batch_size: int = 5
+    batch_size: int = 15
 ) -> pd.DataFrame:
     """Async version of process_dataframe. Processes rows in concurrent batches of batch_size."""
     logging.info(f"Starting async anonymization using model: {model_name}. Total rows: {len(df)}, batch size: {batch_size}")
@@ -535,6 +469,9 @@ async def process_dataframe_async(
 
     for batch_start in range(0, total_rows, batch_size):
         batch = texts[batch_start:batch_start + batch_size]
+        if progress_state is not None:
+            # Set visible status before the batch starts so UI doesn't appear frozen.
+            progress_state["status"] = f"Processing items {batch_start + 1}-{min(batch_start + batch_size, total_rows)} of {total_rows}..."
         tasks = [anonymize_text_async(text, model_name, config, layers) for text in batch]
         results = await asyncio.gather(*tasks)
         anonymized_texts.extend(results)
@@ -554,44 +491,3 @@ async def process_dataframe_async(
     return processed_df
 
 
-def process_dataframe(
-    df: pd.DataFrame,
-    text_column: str,
-    model_name: str = 'aya-expanse:8b',
-    config: Optional[dict] = None,
-    progress_state: Optional[dict] = None,
-    layers: Optional[Set[str]] = None
-) -> pd.DataFrame:
-    """
-    Apply anonymization to a text column. layers=None uses all layers; otherwise only the given IDs (e.g. {"1","3"}).
-    """
-    logging.info(f"Starting anonymization process using model: {model_name}. Total rows: {len(df)}")
-    
-    # Create a copy to avoid SettingWithCopyWarning, though we are returning a new df anyway.
-    processed_df = df.copy()
-    
-    # Initialize a list to hold the results
-    anonymized_texts = []
-    
-    total_rows = len(processed_df)
-    
-    # Iterate with tqdm for a progress bar
-    for i, text in enumerate(tqdm(processed_df[text_column], desc="Anonymizing feedback")):
-        anonymized_texts.append(anonymize_text(text, model_name, config, layers))
-        
-        if progress_state is not None:
-            progress_state["percentage"] = int(((i + 1) / total_rows) * 100)
-            progress_state["status"] = f"Processing item {i + 1} of {total_rows}..."
-            
-        # Small delay to prevent overwhelming the local service if necessary,
-        # usually Ollama handles queuing ok, but a tiny sleep can sometimes help stability.
-        time.sleep(0.01) 
-        
-    processed_df[f'anonymized_{text_column}'] = anonymized_texts
-    
-    if progress_state is not None:
-        progress_state["percentage"] = 100
-        progress_state["status"] = "Completed!"
-    
-    logging.info("Anonymization process completed.")
-    return processed_df

@@ -12,11 +12,15 @@ services:
       - VLLM_MODEL=${VLLM_MODEL:-Qwen/Qwen2.5-3B-Instruct-AWQ}
       - OLLAMA_HOST=http://ollama:11434
       - OLLAMA_MODEL=${OLLAMA_MODEL:-aya-expanse:8b}
+      # Must exceed model load + first token on small GPUs (httpx default ~60s is too short).
+      - OLLAMA_TIMEOUT_SECONDS=${OLLAMA_TIMEOUT_SECONDS:-600}
+      # Optional: higher HF rate limits for eu-pii-safeguard downloads (same as vLLM)
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
       - PYTHONUNBUFFERED=1
     depends_on:
-      vllm:
+      ollama:
         condition: service_healthy
-
   vllm:
     image: vllm/vllm-openai:latest
     ports:
@@ -48,16 +52,37 @@ services:
               count: all
               capabilities: [gpu]
     ipc: host  # vLLM requires shared memory access between processes
+    profiles:
+      - vllm
 
-  # Keep Ollama available as fallback (set LLM_BACKEND=ollama to use)
+  # Always started with privacy-agent so LLM_BACKEND=ollama can reach http://ollama:11434.
+  # (Previously this was profile-only; without --profile ollama the API failed with "Failed to connect to Ollama".)
   ollama:
-    image: ollama/ollama
+    # Use the locally pulled image; avoid pull_policy: always so `compose up` does not replace it with a newer registry :latest.
+    image: ollama/ollama:latest
+    pull_policy: if_not_present
     ports:
       - "11435:11434"  # Changed host port to 11435 to avoid conflict with local Windows Ollama
     volumes:
       - ollama_data:/root/.ollama
       - ./scripts/ollama_entrypoint.sh:/entrypoint.sh
+    environment:
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-aya-expanse:8b}
+      # Lower context = smaller KV cache on GPU → Ollama can often offload *more layers* to the GPU.
+      # Trade-off: max context for chat is shorter (still fine for typical survey rows).
+      # Try 1024 if you still see heavy CPU offload in logs (e.g. fewer "GPULayers" in Ollama logs).
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-2048}
+      # Max concurrent requests Ollama will run through the model. Align with app `batch_size` if you want
+      # full overlap; if parallel < batch, extra requests queue (lower throughput). Higher parallel → faster
+      # wall time but spikier GPU and OOM risk on small VRAM with large models.
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-15}
     entrypoint: ["/bin/bash", "/entrypoint.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 300s
     deploy:
       resources:
         reservations:
@@ -65,8 +90,6 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    profiles:
-      - ollama  # only starts when: docker compose --profile ollama up
 
 volumes:
   ollama_data:
