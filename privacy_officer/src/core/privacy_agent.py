@@ -104,6 +104,57 @@ PRESIDIO_PATTERN_DEFINITIONS = [
         "context": ["lokaal", "gebouw", "lokaalnummer", "kamer", "ruimte", "lokaal"],
         "comment": "Catches R1, TQ 3.14, lokaal 2.05. Caveat: standalone 'R1' without context may be false positive.",
     },
+    # FLOOR_REFERENCE: Floor indicators identifying a physical location within a building.
+    # Catches "3e etage", "2e etage" (numeric ordinal) and "derde etage", "tweede etage" (written ordinal).
+    {
+        "entity": "FLOOR_REFERENCE",
+        "patterns": [
+            Pattern(name="floor_numeric", regex=r'\b\d+[e]\s+etage\b', score=0.9),
+            Pattern(name="floor_written", regex=r'\b(?:eerste|tweede|derde|vierde|vijfde|zesde|zevende|achtste|negende|tiende)\s+etage\b', score=0.9),
+        ],
+        "context": ["etage", "verdieping", "gebouw"],
+        "comment": "Catches '3e etage', 'derde etage'. High score — 'etage' is unambiguous.",
+    },
+    # NL_BSN: Dutch burgerservicenummer. Formatted (123.45.678) caught at 0.95;
+    # bare 9-digit (123456789) at 0.75 with context to suppress false positives.
+    {
+        "entity": "NL_BSN",
+        "patterns": [
+            Pattern(name="nl_bsn_dots", regex=r'\b\d{3}\.\d{2}\.\d{3}\b', score=0.95),
+            Pattern(name="nl_bsn_plain", regex=r'\b\d{9}\b', score=0.75),
+        ],
+        "context": ["bsn", "burgerservicenummer", "sofinummer", "identificatie"],
+        "comment": "Formatted variant is unambiguous. Plain 9-digit needs context to avoid matching random numbers.",
+    },
+    # DUTCH_POSTCODE: Dutch postal code (4 digits + 2 uppercase letters, space optional).
+    {
+        "entity": "DUTCH_POSTCODE",
+        "patterns": [
+            Pattern(name="dutch_postcode", regex=r'\b\d{4}\s?[A-Z]{2}\b', score=0.9),
+        ],
+        "context": ["postcode", "adres", "straat", "woonplaats", "zip"],
+        "comment": "Catches 3061 AW and 3061AW. Format is NL-specific so false positives are rare.",
+    },
+    # DUTCH_HONORIFIC: Dutch honorifics/titles that spaCy NER misclassifies as PERSON.
+    # Replaced with [TITLE] so they are anonymized correctly instead of being tagged [NAME].
+    {
+        "entity": "DUTCH_HONORIFIC",
+        "patterns": [
+            Pattern(name="dutch_honorific", regex=r'\b(?:Mevrouw|mevrouw|Meneer|meneer|Mevr\.|mevr\.|Dhr\.|dhr\.|heer|Heer)\b', score=0.9),
+        ],
+        "context": None,
+        "comment": "Catches Mevrouw/Meneer/heer which spaCy wrongly tags as PERSON → [NAME]. Explicit regex gives [TITLE] instead.",
+    },
+    # DUTCH_PHONE: Dutch mobile numbers in 06-XXXXXXXX format missed by Presidio's built-in PHONE_NUMBER.
+    {
+        "entity": "DUTCH_PHONE",
+        "patterns": [
+            Pattern(name="dutch_mobile", regex=r'\b06[-\s]\d{2}[-\s]?\d{2}[-\s]?\d{2}[-\s]?\d{2}\b', score=0.9),
+            Pattern(name="dutch_mobile_intl", regex=r'\b\+316\d{8}\b', score=0.95),
+        ],
+        "context": None,
+        "comment": "Catches 06-12345678, 06 12 34 56 78, +31612345678. Built-in PHONE_NUMBER misses the dash format.",
+    },
 ]
 
 # Operator mapping: which replacement tag to use per entity. DEFAULT=keep ignores
@@ -118,6 +169,11 @@ PRESIDIO_OPERATORS = {
     "USERNAME": OperatorConfig("replace", {"new_value": "[PII]"}),
     "OBFUSCATED_EMAIL": OperatorConfig("replace", {"new_value": "[PII]"}),
     "BUILDING_OR_ROOM": OperatorConfig("replace", {"new_value": "[PII]"}),
+    "FLOOR_REFERENCE": OperatorConfig("replace", {"new_value": "[LOCATION]"}),
+    "NL_BSN": OperatorConfig("replace", {"new_value": "[PII]"}),
+    "DUTCH_POSTCODE": OperatorConfig("replace", {"new_value": "[LOCATION]"}),
+    "DUTCH_HONORIFIC": OperatorConfig("replace", {"new_value": "[TITLE]"}),
+    "DUTCH_PHONE": OperatorConfig("replace", {"new_value": "[PII]"}),
     "DEFAULT": OperatorConfig("keep"),
 }
 
@@ -160,6 +216,10 @@ def build_presidio_operators(config: Optional[dict] = None) -> dict:
         operators["LOCATION"] = OperatorConfig("replace", {"new_value": "[LOCATION]"})
     else:
         operators["LOCATION"] = OperatorConfig("keep")
+    if config.get("titles", True):
+        operators["DUTCH_HONORIFIC"] = OperatorConfig("replace", {"new_value": "[TITLE]"})
+    else:
+        operators["DUTCH_HONORIFIC"] = OperatorConfig("keep")
     if config.get("pii", True):
         operators["EMAIL_ADDRESS"] = OperatorConfig("replace", {"new_value": "[PII]"})
         operators["PHONE_NUMBER"] = OperatorConfig("replace", {"new_value": "[PII]"})
@@ -167,9 +227,22 @@ def build_presidio_operators(config: Optional[dict] = None) -> dict:
         operators["USERNAME"] = OperatorConfig("replace", {"new_value": "[PII]"})
         operators["OBFUSCATED_EMAIL"] = OperatorConfig("replace", {"new_value": "[PII]"})
         operators["BUILDING_OR_ROOM"] = OperatorConfig("replace", {"new_value": "[PII]"})
+        operators["DUTCH_PHONE"] = OperatorConfig("replace", {"new_value": "[PII]"})
     else:
-        for e in ("EMAIL_ADDRESS", "PHONE_NUMBER", "STUDENT_NUMBER", "USERNAME", "OBFUSCATED_EMAIL", "BUILDING_OR_ROOM"):
+        for e in ("EMAIL_ADDRESS", "PHONE_NUMBER", "STUDENT_NUMBER", "USERNAME", "OBFUSCATED_EMAIL", "BUILDING_OR_ROOM", "DUTCH_PHONE"):
             operators[e] = OperatorConfig("keep")
+    if config.get("floors", True):
+        operators["FLOOR_REFERENCE"] = OperatorConfig("replace", {"new_value": "[LOCATION]"})
+    else:
+        operators["FLOOR_REFERENCE"] = OperatorConfig("keep")
+    if config.get("bsn", True):
+        operators["NL_BSN"] = OperatorConfig("replace", {"new_value": "[PII]"})
+    else:
+        operators["NL_BSN"] = OperatorConfig("keep")
+    if config.get("postcode", True):
+        operators["DUTCH_POSTCODE"] = OperatorConfig("replace", {"new_value": "[LOCATION]"})
+    else:
+        operators["DUTCH_POSTCODE"] = OperatorConfig("keep")
     operators["DEFAULT"] = OperatorConfig("keep")
     return operators
 

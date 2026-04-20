@@ -199,9 +199,21 @@
                         <input type="checkbox" id="anon_courses" name="anon_courses" checked>
                         <label for="anon_courses" style="margin:0; font-weight:normal;">Courses/Depts [COURSE]</label>
                     </div>
-                    <div class="checkbox-group" style="grid-column: span 2;">
+                    <div class="checkbox-group">
                         <input type="checkbox" id="anon_student_nr" name="anon_student_nr" checked>
                         <label for="anon_student_nr" style="margin:0; font-weight:normal;">Student Numbers (e.g. 547795) [PII]</label>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="anon_floors" name="anon_floors" checked>
+                        <label for="anon_floors" style="margin:0; font-weight:normal;">Floor References (e.g. 3e etage) [LOCATION]</label>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="anon_bsn" name="anon_bsn" checked>
+                        <label for="anon_bsn" style="margin:0; font-weight:normal;">BSN (burgerservicenummer) [PII]</label>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="anon_postcode" name="anon_postcode" checked>
+                        <label for="anon_postcode" style="margin:0; font-weight:normal;">Dutch Postcodes (e.g. 3061 AW) [LOCATION]</label>
                     </div>
                 </div>
             </div>
@@ -275,6 +287,9 @@
             formData.append('anon_physical', document.getElementById('anon_physical').checked);
             formData.append('anon_courses', document.getElementById('anon_courses').checked);
             formData.append('anon_student_nr', document.getElementById('anon_student_nr').checked);
+            formData.append('anon_floors', document.getElementById('anon_floors').checked);
+            formData.append('anon_bsn', document.getElementById('anon_bsn').checked);
+            formData.append('anon_postcode', document.getElementById('anon_postcode').checked);
             for (const id of ['layer_1', 'layer_2', 'layer_3']) {
                 const cb = document.getElementById(id);
                 if (cb && cb.checked) formData.append('layers', cb.value);

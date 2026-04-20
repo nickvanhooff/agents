@@ -145,11 +145,11 @@ def _run_recall_check(df: pd.DataFrame, anon_col: str, pii_col: str) -> dict:
 
     # Top missed values
     all_missed = [v for row in missed_per_row for v in row.split(", ") if v]
-    top_missed = [{"value": v, "count": c} for v, c in Counter(all_missed).most_common(10)]
+    top_missed = [{"value": v, "count": c} for v, c in Counter(all_missed).most_common()]
 
     # Top unexpected replacements
     all_extras = [v for row in extras_per_row for v in row.split(", ") if v]
-    top_extras = [{"value": v, "count": c} for v, c in Counter(all_extras).most_common(10)]
+    top_extras = [{"value": v, "count": c} for v, c in Counter(all_extras).most_common()]
 
     return {
         "recall":           recall,
@@ -175,6 +175,9 @@ async def anonymize_csv(
     anon_physical: bool = Form(True),
     anon_courses: bool = Form(True),
     anon_student_nr: bool = Form(True),
+    anon_floors: bool = Form(True),
+    anon_bsn: bool = Form(True),
+    anon_postcode: bool = Form(True),
     layers: List[str] = Form(default=[]),
     run_check: bool = Form(False),
     pii_reference_column: str = Form("voorkomende tekst van pii of indirect wat eruit gehaald moet worden"),
@@ -225,7 +228,10 @@ async def anonymize_csv(
         "titles": parse_bool(anon_titles),
         "physical": parse_bool(anon_physical),
         "courses": parse_bool(anon_courses),
-        "student_nr": parse_bool(anon_student_nr)
+        "student_nr": parse_bool(anon_student_nr),
+        "floors": parse_bool(anon_floors),
+        "bsn": parse_bool(anon_bsn),
+        "postcode": parse_bool(anon_postcode),
     }
     
     # Pick model name from env based on active backend
