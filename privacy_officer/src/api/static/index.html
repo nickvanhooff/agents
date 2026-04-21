@@ -132,6 +132,30 @@
             margin-top: 15px;
             text-align: center;
         }
+        .download-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 15px;
+        }
+        a.download-btn-parquet {
+            display: inline-block;
+            background-color: #6f42c1;
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            text-align: center;
+        }
+        a.download-btn-jsonl {
+            display: inline-block;
+            background-color: #fd7e14;
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -144,8 +168,8 @@
     <div class="card">
         <form id="uploadForm">
             <div class="form-group">
-                <label for="csvFile">1. Upload Raw Data (CSV)</label>
-                <input type="file" id="csvFile" name="file" accept=".csv" required>
+                <label for="csvFile">1. Upload Raw Data (CSV or Parquet)</label>
+                <input type="file" id="csvFile" name="file" accept=".csv,.parquet" required>
             </div>
             
             <div class="form-group">
@@ -399,12 +423,17 @@
                         }
                     }
 
+                    const csvFilename = result.download_url.split('/').pop();
                     statusDiv.className = 'status success';
                     statusDiv.innerHTML = `
                         <strong>✅ Dataset successfully anonymized!</strong><br>
-                        Local Ollama parsing complete.
-                        <br><br>
-                        <a href="${result.download_url}" class="download-btn" download>📥 Download Anonymized CSV</a>
+                        Local processing complete.
+                        <br>
+                        <div class="download-group">
+                            <a href="${result.download_url}" class="download-btn" download>📥 Download CSV</a>
+                            <a href="/api/convert/${csvFilename}?format=parquet" class="download-btn-parquet" download>📦 Download Parquet</a>
+                            <a href="/api/convert/${csvFilename}?format=jsonl" class="download-btn-jsonl" download>📄 Download JSONL</a>
+                        </div>
                         ${warningHtml}
                         ${checkHtml}
                     `;

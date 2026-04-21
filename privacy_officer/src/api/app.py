@@ -3,6 +3,7 @@ import re
 import json
 import asyncio
 import difflib
+import time
 from collections import Counter
 from typing import List, Optional
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Form, HTTPException, Request
@@ -14,6 +15,8 @@ from pathlib import Path
 
 # Important: we import our core offline Privacy Agent
 from src.core.privacy_agent import process_dataframe_async
+from src.core.data_converter import convert_csv, SUPPORTED_FORMATS
+from src.core.data_loader import load_data, SUPPORTED_INPUT_FORMATS
 
 app = FastAPI(title="Fontys Privacy Officer Agent")
 
@@ -34,22 +37,6 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 async def read_index():
     with open(STATIC_DIR / "index.html", "r", encoding="utf-8") as f:
         return f.read()
-
-def _read_csv_robust(path) -> pd.DataFrame:
-    """Try common encodings × delimiters until a multi-column parse succeeds."""
-    for encoding in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
-        for sep in (",", ";", "\t"):
-            try:
-                df = pd.read_csv(path, encoding=encoding, sep=sep)
-                if len(df.columns) > 1:
-                    return df
-            except Exception:
-                continue
-    # Last resort: single-column file or truly unreadable
-    raise HTTPException(
-        status_code=400,
-        detail="Could not parse the CSV file. Make sure it uses comma, semicolon, or tab as separator and is saved as UTF-8 or Latin-1."
-    )
 
 
 _TAG_PATTERN = re.compile(r'\[(?:NAME|TITLE|PII|LOCATION|COURSE[/_]?DEPT|PHYSICAL_DESCRIPTOR|STUDENT_NR|EMAIL|PHONE)[^\]]*\]')
@@ -163,6 +150,34 @@ def _run_recall_check(df: pd.DataFrame, anon_col: str, pii_col: str) -> dict:
     }
 
 
+def _build_output_filename(
+    stem: str,
+    layers_set,
+    model_name: str,
+    elapsed: int,
+    check_result,
+    run_check: bool,
+) -> str:
+    """
+    Build an informative output filename when recall check is active.
+    Format: {stem}_L{layers}[_{model}]_{elapsed}s_recall{pct}.csv
+    Falls back to safe_{stem}.csv when recall check is off or errored.
+    """
+    if not run_check or check_result is None or check_result.get("error"):
+        return f"safe_{stem}.csv"
+
+    active = sorted(layers_set) if layers_set else ["1", "2", "3"]
+    layer_str = "L" + "".join(active)
+
+    model_part = ""
+    if "3" in set(active):
+        slug = re.sub(r"[^a-zA-Z0-9._-]", "-", model_name.split("/")[-1])[:20]
+        model_part = f"_{slug}"
+
+    recall_pct = int(check_result.get("recall", 0))
+    return f"{stem}_{layer_str}{model_part}_{elapsed}s_recall{recall_pct}.csv"
+
+
 @app.post("/api/anonymize")
 async def anonymize_csv(
     background_tasks: BackgroundTasks,
@@ -187,14 +202,19 @@ async def anonymize_csv(
     and returns the safe/scrubbed file.
     """
     input_path = UPLOAD_DIR / f"raw_{file.filename}"
-    output_path = UPLOAD_DIR / f"safe_{file.filename}"
+    # Output is always CSV — format conversion is handled by /api/convert
+    output_stem = Path(file.filename).stem
+    output_path = UPLOAD_DIR / f"safe_{output_stem}.csv"
 
     # 1. Save uploaded file
     with open(input_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    # 2. Process using our offline AI logic
-    df = _read_csv_robust(input_path)
+    # 2. Load input (CSV or Parquet)
+    try:
+        df = load_data(input_path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     
     if text_column not in df.columns:
         raise HTTPException(status_code=400, detail=f"Column '{text_column}' not found in the CSV. Available columns: {list(df.columns)}")
@@ -241,10 +261,12 @@ async def anonymize_csv(
     else:
         model_name = os.getenv('OLLAMA_MODEL', 'aya-expanse:8b')
     
-    # We pass progress_state to process_dataframe_async so it can update it in real-time
+    # 3. Run anonymization — measure wall time for benchmarking filename
+    t_start = time.time()
     processed_df = await process_dataframe_async(df, text_column=text_column, model_name=model_name, config=config, progress_state=progress_state, layers=layers_set)
-    
-    # 3. Recall check (optional)
+    elapsed = int(time.time() - t_start)
+
+    # 4. Recall check (optional)
     check_result = None
     anon_col = f"anonymized_{text_column}"
     if run_check:
@@ -253,7 +275,9 @@ async def anonymize_csv(
         else:
             check_result = {"error": f"Column '{pii_reference_column}' not found in CSV — check skipped."}
 
-    # 4. Export to a new CSV file
+    # 5. Build output filename — informative name when recall check is active
+    output_filename = _build_output_filename(output_stem, layers_set, model_name, elapsed, check_result, run_check)
+    output_path = UPLOAD_DIR / output_filename
     processed_df.to_csv(output_path, index=False)
 
     # Count flagged items
@@ -264,10 +288,11 @@ async def anonymize_csv(
     progress_state["status"] = "Complete"
 
     return {
-        "message":      "Success",
-        "download_url": f"/api/download/safe_{file.filename}",
-        "flagged_count": flagged_count,
-        "check":        check_result,
+        "message":        "Success",
+        "download_url":   f"/api/download/{output_filename}",
+        "flagged_count":  flagged_count,
+        "check":          check_result,
+        "elapsed_seconds": elapsed,
     }
 
 @app.get("/api/progress")
@@ -292,3 +317,36 @@ async def get_progress(request: Request):
 async def download_file(filename: str):
     file_path = UPLOAD_DIR / filename
     return FileResponse(path=file_path, filename=filename, media_type='text/csv')
+
+
+@app.get("/api/convert/{filename}")
+async def convert_file(filename: str, format: str):
+    """
+    Convert an anonymized CSV in uploads/ to parquet or jsonl on demand.
+    Example: GET /api/convert/safe_data.csv?format=parquet
+    """
+    fmt = format.lower()
+    if fmt not in SUPPORTED_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported format '{fmt}'. Choose from: {sorted(SUPPORTED_FORMATS)}"
+        )
+
+    csv_path = UPLOAD_DIR / filename
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail=f"File '{filename}' not found.")
+
+    try:
+        output_path = convert_csv(csv_path, fmt)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Conversion failed: {e}")
+
+    media_types = {
+        "parquet": "application/octet-stream",
+        "jsonl": "application/jsonlines",
+    }
+    return FileResponse(
+        path=output_path,
+        filename=output_path.name,
+        media_type=media_types[fmt],
+    )

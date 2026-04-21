@@ -2,7 +2,7 @@
 
 Dit document beschrijft stappen en keuzes rond vLLM/Ollama, Docker Compose, timeouts en de LLM-extractieprompt voor de Privacy Officer-agent. Structuur afgestemd op `eva-multi-agent/STAPPEN.md` (zelfde portfolioformaat).
 
-**Datum laatste update:** 2026-04-20 (Stap 26: Evidence layer 1 verbetering vastgelegd)
+**Datum laatste update:** 2026-04-21 (Stap 34: Layer 2 GPU-ondersteuning en batch-optimalisatie)
 
 **Transparantie — Cursor:** Cursor is gebruikt voor iteratieve code-aanpassingen (compose, timeouts, `parse_llm_json_response`) en voor het opzetten van dit stappenlog in dezelfde vorm als Eva. Keuzes, foutanalyse uit logs en benchmark zijn eigen werk; Cursor versnelt uitwerking en herstructurering, geen vervanging van domeinbeslissingen.
 
@@ -664,6 +664,191 @@ Presidio’s built-in phone recognizer is te conservatief voor NL-formaten; de h
 
 **Waarom:**
 Portfolio-evidence voor SC-1 (PII-detectierate per laag) en SC-2 (false-positiverate). De iteratieve verbetering van Layer 1 is nu aantoonbaar met meetbare data.
+
+---
+
+## Stap 27: CSV vs Parquet — inputformaat en bottleneck analyse
+
+**Datum:** 2026-04-21
+
+**Prompt (letterlijk):**
+> is it better to use a parquet file then a csv if i look to the speed of the process, in the end situation it has around 15000 rows to anonymize
+
+**Wat is er gedaan:**
+- Geanalyseerd waar de werkelijke verwerkingstijd zit bij 15.000 rijen.
+- Conclusie: `pd.read_csv()` duurt ~0,1–0,3 seconden voor 15k rijen; Parquet scheelt op die stap maximaal 80ms — verwaarloosbaar.
+- De echte bottleneck per rij: Layer 1 (Presidio/spaCy, ~10–50ms), Layer 2 (transformer, ~50–200ms), Layer 3 (LLM, ~500ms–3s).
+- Geen codewijziging gemaakt; advies: focus op Layer 2 batching en `batch_size` verhogen, niet op het inputformaat.
+
+**Waarom:**
+Parquet is gunstig als je dezelfde data tientallen keren leest of grote binaire kolommen hebt. Voor één lees- en schrijfoperatie van tekstrijen is het verschil met CSV niet meetbaar ten opzichte van de verwerkingstijd per rij.
+
+**Bronnen:**
+- Eigen analyse van `privacy_agent.py` (tijdverdeling per laag); pandas docs.
+
+**Zelf bedacht:**
+Beslissing om het inputformaat *niet* te wijzigen als performancemaatregel — de bottleneck zit in de ML-inferentie, niet in I/O.
+
+---
+
+## Stap 28: Opsplitsen `privacy_agent.py` in laagbestanden
+
+**Datum:** 2026-04-21
+
+**Prompt (letterlijk):**
+> now it is all in 1 file but is it not more easier if i had 3 separate files so there is structure of the layers as files?
+
+**Wat is er gedaan:**
+- `src/core/privacy_agent.py` (567 regels) opgesplitst in vier bestanden:
+  - `src/core/layers/layer1_presidio.py` — Presidio-setup, pattern definitions, operators, `anonymize_with_presidio()`
+  - `src/core/layers/layer2_eu_pii.py` — HF-pipeline initialisatie, `eu_pii_safeguard_anonymize()`, nieuw: `eu_pii_safeguard_anonymize_batch()`
+  - `src/core/layers/layer3_llm.py` — LLM-clients (vLLM/Ollama), `get_dynamic_prompt()`, `parse_llm_json_response()`, `anonymize_with_llm_async()`
+  - `src/core/privacy_agent.py` — alleen orchestratie: importeert lagen, ketent ze, beheert batching en progress
+- `src/core/layers/__init__.py` aangemaakt (leeg pakket).
+- `app.py` en `main.py` ongewijzigd — beiden importeren alleen `process_dataframe_async`, waarvan de signatuur gelijk bleef.
+
+**Layer 2 batching toegevoegd:**
+- `_apply_eu_pii_entities()` als gedeelde helper geëxtraheerd uit `eu_pii_safeguard_anonymize()`.
+- `eu_pii_safeguard_anonymize_batch(texts, config)` roept `eu_pii_ner(texts)` eenmalig aan per batch in plaats van per rij — de HF-pipeline geeft een `list[list[dict]]` terug.
+- `process_dataframe_async()` herschreven: Layer 1 per tekst (sync), Layer 2 als één batch-aanroep, Layer 3 async/concurrent per tekst.
+
+**Waarom:**
+Één bestand van 567 regels met drie onafhankelijke verantwoordelijkheden maakt onderhoud moeilijker. Elke laag heeft nu één bestand dat zelfstandig te lezen en te testen is. De batch-aanpak voor Layer 2 verlaagt ook het aantal transformer-aanroepen van N naar N/batch_size.
+
+**Bronnen:**
+- HF `transformers.pipeline` docs (batch_size parameter).
+
+**Zelf bedacht:**
+`_apply_eu_pii_entities()` als private helper om dubbele vervangingslogica te vermijden tussen de single- en batch-variant.
+
+---
+
+## Stap 29: Parquet en JSONL als uitvoerformaten
+
+**Datum:** 2026-04-21
+
+**Prompt (letterlijk):**
+> make a convert file and add after the anonymization i want that there is a option to convert it to parquet or jsonl, make a service
+
+**Wat is er gedaan:**
+- `src/core/data_converter.py` aangemaakt met:
+  - `to_parquet(df, path)` — schrijft via `pyarrow`
+  - `to_jsonl(df, path)` — schrijft JSON Lines (`orient=’records’, lines=True, force_ascii=False`)
+  - `convert_csv(csv_path, fmt)` — leest bestaande output-CSV en converteert naar gevraagd formaat
+- Nieuw API-endpoint `GET /api/convert/{filename}?format=parquet|jsonl` toegevoegd aan `app.py`.
+- `pyarrow>=14.0.0` toegevoegd aan `requirements.txt`.
+- `index.html`: drie downloadknoppen na anonimisering — CSV (groen), Parquet (paars), JSONL (oranje). Bestandsnaam dynamisch afgeleid van de `download_url` in de API-response.
+
+**Waarom:**
+Parquet is efficiënter voor downstream data-analyse; JSONL is handig voor regelsgewijze verwerking of import in andere tools. De conversie gebeurt on demand (niet bij elke run) zodat de verwerkingstijd niet toeneemt.
+
+**Bronnen:**
+- pandas `to_parquet` / `to_json` docs; FastAPI `FileResponse`.
+
+**Zelf bedacht:**
+Conversie on-the-fly via een apart endpoint — de output-CSV blijft altijd de primaire opslag; formaten worden pas aangemaakt als de gebruiker erop klikt.
+
+---
+
+## Stap 30: Parquet als invoerformaat
+
+**Datum:** 2026-04-21
+
+**Prompt (letterlijk):**
+> make it possible that i add a parquet file as input so i can test the anonymizer with parquet data to test if it is faster. still csv must be available to input
+
+**Wat is er gedaan:**
+- `src/core/data_loader.py` herschreven:
+  - `load_csv()` — robuuste multi-encoding/separator logica (overgezet vanuit `app.py`)
+  - `load_parquet()` — laadt via pyarrow
+  - `load_data()` — dispatcht op bestandsextensie (`.csv` of `.parquet`)
+- `app.py`:
+  - `_read_csv_robust()` verwijderd (logica nu in `data_loader.py`)
+  - Roept `load_data(input_path)` aan — werkt voor beide formaten
+  - Output altijd als `safe_{stem}.csv` opgeslagen, ongeacht het invoerformaat (zodat `/api/download` en `/api/convert` ongewijzigd blijven)
+- `index.html`: `accept=".csv"` → `accept=".csv,.parquet"`.
+
+**Waarom:**
+Testen of Parquet-input meetbaar sneller is dan CSV bij grotere datasets. De laadtijd is bij 15k rijen klein, maar het maakt de vergelijking mogelijk. CSV blijft ondersteund zodat bestaande workflows niet breken.
+
+**Bronnen:**
+- pandas `read_parquet` docs; eigen analyse (stap 27).
+
+**Zelf bedacht:**
+Output altijd als CSV — zo werken de download- en converteer-endpoints zonder aanpassingen, ongeacht het invoerformaat.
+
+---
+
+## Stap 31: spaCy-modelkeuze besproken
+
+**Datum:** 2026-04-21
+
+**Prompt (letterlijk):**
+> is this the best dataset for the spacy model for presidio? or what can be the difference with another?
+
+**Wat is er gedaan:**
+- Huidige modellen geanalyseerd: `nl_core_news_lg` (Nederlands) en `en_core_web_lg` (Engels).
+- Voor Nederlands: geen `_trf` (transformer) variant beschikbaar in de standaard spaCy 3.8-releases — `nl_core_news_lg` is het maximum.
+- Voor Engels: `en_core_web_trf` (RoBERTa-based) bestaat wel (~90% NER), maar is traag op CPU en levert marginale winst omdat Layer 2 al een transformer runt over wat Layer 1 mist.
+- Geen wijzigingen gemaakt.
+
+**Waarom:**
+De huidige keuze is de juiste afweging: `_lg` geeft goede nauwkeurigheid bij redelijke snelheid; het meerlaagse ontwerp compenseert structureel wat Layer 1 mist.
+
+**Bronnen:**
+- spaCy model-overzicht; eigen analyse van pipeline-architectuur.
+
+**Zelf bedacht:**
+Beslissing om `en_core_web_trf` niet te gebruiken — twee transformers in serie (Layer 1 _trf + Layer 2 eu-pii-safeguard) voor marginale winst is niet proportioneel op CPU-hardware.
+
+---
+
+## Stap 32: Layer 2 op GPU gezet
+
+**Datum:** 2026-04-21
+
+**Prompt (letterlijk):**
+> why does it run on cpu instead of gpu? my gpu is rtx 4050 so it is stronger
+
+**Wat is er gedaan:**
+- Geconstateerd dat `device=-1` hardcoded stond in `layer2_eu_pii.py` (CPU).
+- Geconstateerd dat de `privacy-agent` service in `docker-compose.yml` **geen GPU-reservering** had (alleen `ollama` en `vllm` hadden dat).
+- `layer2_eu_pii.py`: `device=-1` vervangen door `_device = 0 if torch.cuda.is_available() else -1` — auto-detectie, werkt ook in CPU-omgevingen.
+- `docker-compose.yml`: `deploy.resources.reservations.devices` (nvidia, all) toegevoegd aan de `privacy-agent` service.
+- Opstartlog toont nu: `Loading tabularisai/eu-pii-safeguard model on GPU (cuda:0)`.
+
+**Waarom:**
+Zonder de GPU-reservering in Docker Compose ziet PyTorch de GPU niet, ongeacht wat de code instelt. De RTX 4050 verwerkt BERT-achtige token-classificatie significant sneller dan CPU, vooral met grotere batches.
+
+**Bronnen:**
+- Docker Compose `deploy.resources` docs; PyTorch `torch.cuda.is_available()` docs.
+
+**Zelf bedacht:**
+Auto-detectie via `torch.cuda.is_available()` i.p.v. een vaste waarde — zo werkt de container ook als iemand zonder GPU draait.
+
+---
+
+## Stap 33: Layer 2 batch-optimalisatie en validatie op 2000 rijen
+
+**Datum:** 2026-04-21
+
+**Prompt (letterlijk):**
+> if i use the layer 2 and much data then it does only send a few at a time [...] i think it can be more and faster
+
+**Wat is er gedaan:**
+- Geïdentificeerd: `eu_pii_ner(texts)` zonder `batch_size`-parameter gebruikt intern batch_size=1 — de transformer verwerkt teksten één voor één ondanks dat er een lijst meegegeven wordt.
+- Fix: `eu_pii_ner(texts, batch_size=len(texts))` — de volledige batch gaat in één transformer forward pass.
+- Outer `batch_size` in `process_dataframe_async` verhoogd: 32 → 200 (gebruiker aangepast na testen).
+- **Validatieresultaat:** recall op 2000 rijen gelijk aan de resultaten op de kleinere testset — de batching wijzigt de output niet, alleen de snelheid.
+
+**Waarom:**
+De HF-pipeline buffert intern niet automatisch; `batch_size` moet expliciet worden meegegeven om de GPU efficiënt te benutten. Zonder dit: 200 afzonderlijke forward passes per batch. Met dit: één forward pass voor 200 teksten tegelijk.
+
+**Bronnen:**
+- HF `transformers.pipeline` docs (`batch_size` parameter); eigen loganalyse (eu-pii-safeguard resultaten kwamen in groepjes van ~4 i.p.v. tegelijk).
+
+**Zelf bedacht:**
+`batch_size=len(texts)` i.p.v. een vaste waarde — zo schaalt de batch automatisch mee met wat er binnenkomt zonder hardcoded grenzen.
 
 ---
 
