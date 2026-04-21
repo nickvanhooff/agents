@@ -157,10 +157,11 @@ def _build_output_filename(
     elapsed: int,
     check_result,
     run_check: bool,
+    batch_size: int = 200,
 ) -> str:
     """
     Build an informative output filename when recall check is active.
-    Format: {stem}_L{layers}[_{model}]_{elapsed}s_recall{pct}.csv
+    Format: {stem}_L{layers}[_{model}]_b{batch_size}_{elapsed}s_recall{pct}.csv
     Falls back to safe_{stem}.csv when recall check is off or errored.
     """
     if not run_check or check_result is None or check_result.get("error"):
@@ -175,7 +176,7 @@ def _build_output_filename(
         model_part = f"_{slug}"
 
     recall_pct = int(check_result.get("recall", 0))
-    return f"{stem}_{layer_str}{model_part}_{elapsed}s_recall{recall_pct}.csv"
+    return f"{stem}_{layer_str}{model_part}_b{batch_size}_{elapsed}s_recall{recall_pct}.csv"
 
 
 @app.post("/api/anonymize")
@@ -262,8 +263,9 @@ async def anonymize_csv(
         model_name = os.getenv('OLLAMA_MODEL', 'aya-expanse:8b')
     
     # 3. Run anonymization — measure wall time for benchmarking filename
+    batch_size = 200
     t_start = time.time()
-    processed_df = await process_dataframe_async(df, text_column=text_column, model_name=model_name, config=config, progress_state=progress_state, layers=layers_set)
+    processed_df = await process_dataframe_async(df, text_column=text_column, model_name=model_name, config=config, progress_state=progress_state, layers=layers_set, batch_size=batch_size)
     elapsed = int(time.time() - t_start)
 
     # 4. Recall check (optional)
@@ -276,7 +278,7 @@ async def anonymize_csv(
             check_result = {"error": f"Column '{pii_reference_column}' not found in CSV — check skipped."}
 
     # 5. Build output filename — informative name when recall check is active
-    output_filename = _build_output_filename(output_stem, layers_set, model_name, elapsed, check_result, run_check)
+    output_filename = _build_output_filename(output_stem, layers_set, model_name, elapsed, check_result, run_check, batch_size)
     output_path = UPLOAD_DIR / output_filename
     processed_df.to_csv(output_path, index=False)
 

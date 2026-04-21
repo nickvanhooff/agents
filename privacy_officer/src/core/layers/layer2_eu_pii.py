@@ -91,6 +91,41 @@ def eu_pii_safeguard_anonymize(text: str, config: Optional[dict] = None) -> str:
     return _apply_eu_pii_entities(text, entities, config)
 
 
+def eu_pii_collect_batch(texts: list, config: Optional[dict] = None) -> list:
+    """
+    Run eu-pii-safeguard on a list of texts and return span lists without applying masking.
+    Returns list[list[(start, end, tag)]] — one span list per input text.
+    Used for late-masking mode.
+    """
+    if eu_pii_ner is None or not texts:
+        return [[] for _ in texts]
+
+    try:
+        batch_entities = eu_pii_ner(texts, batch_size=len(texts))
+    except Exception as e:
+        logging.error(f"eu-pii-safeguard collect batch error: {e}")
+        return [[] for _ in texts]
+
+    all_spans = []
+    for text, entities in zip(texts, batch_entities):
+        spans = []
+        for ent in sorted(entities, key=lambda e: e["end"] - e["start"], reverse=True):
+            span_text = text[ent["start"]:ent["end"]]
+            if not span_text.strip() or len(span_text) < 2:
+                continue
+            tag = _eu_pii_tag(ent["entity_group"])
+            if config:
+                if tag == "[NAME]" and not config.get("names", True):
+                    continue
+                if tag == "[LOCATION]" and not config.get("locations", True):
+                    continue
+                if tag == "[PII]" and not config.get("pii", True):
+                    continue
+            spans.append((ent["start"], ent["end"], tag))
+        all_spans.append(spans)
+    return all_spans
+
+
 def eu_pii_safeguard_anonymize_batch(texts: list, config: Optional[dict] = None) -> list:
     """
     Run eu-pii-safeguard on a list of texts in one pipeline call.

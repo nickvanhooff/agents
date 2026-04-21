@@ -4,8 +4,8 @@ from typing import Optional, Set
 
 import pandas as pd
 
-from src.core.layers.layer1_presidio import anonymize_with_presidio
-from src.core.layers.layer2_eu_pii import eu_pii_safeguard_anonymize_batch
+from src.core.layers.layer1_presidio import anonymize_with_presidio, collect_presidio_spans
+from src.core.layers.layer2_eu_pii import eu_pii_safeguard_anonymize_batch, eu_pii_collect_batch
 from src.core.layers.layer3_llm import anonymize_with_llm_async
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -14,35 +14,55 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 VALID_LAYER_IDS: Set[str] = {"1", "2", "3"}
 
 
+def apply_all_masks(text: str, spans: list) -> str:
+    """
+    Apply a merged list of (start, end, tag) spans to text in one pass.
+    Overlaps resolved by keeping the longest span.
+    Applied right-to-left so earlier offsets stay valid during replacement.
+    """
+    if not spans:
+        return text
+
+    # Longest span wins when spans overlap
+    sorted_spans = sorted(spans, key=lambda s: s[1] - s[0], reverse=True)
+    selected = []
+    for start, end, tag in sorted_spans:
+        if not any(start < se and end > ss for ss, se, _ in selected):
+            selected.append((start, end, tag))
+
+    # Right-to-left so replacements don't shift offsets of earlier spans
+    selected.sort(key=lambda s: s[0], reverse=True)
+    result = text
+    for start, end, tag in selected:
+        result = result[:start] + tag + result[end:]
+    return result
+
+
 async def anonymize_text_async(
     text: str,
     model_name: str = 'aya-expanse:8b',
     config: Optional[dict] = None,
     layers: Optional[Set[str]] = None
 ) -> str:
-    """Anonymize a single text through the selected layers."""
+    """
+    Anonymize a single text. Layers 1+2 collect spans from the original text
+    and mask once at the end. Layer 3 (LLM) runs on the masked result if selected.
+    """
     if not isinstance(text, str) or not text.strip():
         return text
-
     if config and not any(config.values()):
         return text
 
-    # Layer 1: Presidio
+    l1_spans = []
     if layers is None or "1" in layers:
-        try:
-            result = anonymize_with_presidio(text, config)
-        except Exception as e:
-            logging.error(f"Presidio error on '{text[:30]}...': {e}")
-            result = text
-    else:
-        result = text
+        l1_spans = collect_presidio_spans(text, config)
 
-    # Layer 2: EU-PII-Safeguard (single-text path for standalone calls)
+    l2_spans = []
     if layers is None or "2" in layers:
-        batch_out = eu_pii_safeguard_anonymize_batch([result], config)
-        result = batch_out[0]
+        l2_spans = eu_pii_collect_batch([text], config)[0]
 
-    # Layer 3: LLM
+    result = apply_all_masks(text, l1_spans + l2_spans)
+
     if layers is None or "3" in layers:
         result = await anonymize_with_llm_async(result, model_name, config)
 
@@ -72,30 +92,32 @@ async def process_dataframe_async(
         if progress_state is not None:
             progress_state["status"] = f"Processing items {batch_start + 1}-{done_so_far} of {total_rows}..."
 
-        # Layer 1: Presidio — sync, per text
+        # Layer 1: collect spans from original texts — sync, per text
         if layers is None or "1" in layers:
-            layer1_out = []
+            layer1_spans = []
             for t in batch:
-                try:
-                    layer1_out.append(anonymize_with_presidio(t, config))
-                except Exception as e:
-                    logging.error(f"Presidio error on '{str(t)[:30]}...': {e}")
-                    layer1_out.append(t)
+                layer1_spans.append(collect_presidio_spans(t, config))
         else:
-            layer1_out = list(batch)
+            layer1_spans = [[] for _ in batch]
 
-        # Layer 2: EU-PII-Safeguard — one batch call for the whole chunk
+        # Layer 2: collect spans from original texts — one batch GPU call
         if layers is None or "2" in layers:
-            layer2_out = eu_pii_safeguard_anonymize_batch(layer1_out, config)
+            layer2_spans = eu_pii_collect_batch(list(batch), config)
         else:
-            layer2_out = layer1_out
+            layer2_spans = [[] for _ in batch]
 
-        # Layer 3: LLM — async concurrent per text
+        # Merge spans from both layers and apply once to original texts
+        pre_llm = [
+            apply_all_masks(text, l1 + l2)
+            for text, l1, l2 in zip(batch, layer1_spans, layer2_spans)
+        ]
+
+        # Layer 3: LLM — async concurrent per text, runs on already-masked output
         if layers is None or "3" in layers:
-            tasks = [anonymize_with_llm_async(t, model_name, config) for t in layer2_out]
+            tasks = [anonymize_with_llm_async(t, model_name, config) for t in pre_llm]
             results = list(await asyncio.gather(*tasks))
         else:
-            results = layer2_out
+            results = pre_llm
 
         anonymized_texts.extend(results)
 

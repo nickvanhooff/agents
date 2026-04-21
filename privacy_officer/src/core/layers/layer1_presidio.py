@@ -233,3 +233,31 @@ def anonymize_with_presidio(text: str, config: Optional[dict] = None) -> str:
     results = analyzer.analyze(text=text, language=lang)
     operators = build_presidio_operators(config)
     return anonymizer.anonymize(text=text, analyzer_results=results, operators=operators).text
+
+
+def collect_presidio_spans(text: str, config: Optional[dict] = None) -> list:
+    """
+    Run Presidio analysis and return (start, end, tag) spans without applying masking.
+    Used for late-masking mode where all layers collect first, mask once at the end.
+    """
+    try:
+        try:
+            lang = detect(text)
+            if lang not in ["nl", "en"]:
+                lang = "nl"
+        except LangDetectException:
+            lang = "nl"
+
+        results = analyzer.analyze(text=text, language=lang)
+        operators = build_presidio_operators(config)
+
+        spans = []
+        for result in results:
+            op = operators.get(result.entity_type) or operators.get("DEFAULT")
+            if op and op.operator_name == "replace":
+                tag = op.params.get("new_value", "[PII]")
+                spans.append((result.start, result.end, tag))
+        return spans
+    except Exception as e:
+        logging.error(f"Presidio collect error on '{text[:30]}...': {e}")
+        return []
