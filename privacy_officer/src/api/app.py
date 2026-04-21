@@ -16,7 +16,7 @@ from pathlib import Path
 # Important: we import our core offline Privacy Agent
 from src.core.privacy_agent import process_dataframe_async
 from src.core.data_converter import convert_csv, SUPPORTED_FORMATS
-from src.core.data_loader import load_data, SUPPORTED_INPUT_FORMATS
+from src.core.data_loader import load_data, read_headers, SUPPORTED_INPUT_FORMATS
 
 app = FastAPI(title="Fontys Privacy Officer Agent")
 
@@ -312,6 +312,23 @@ async def get_progress(request: Request):
             await asyncio.sleep(0.5) # Send update every 0.5 seconds
             
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.post("/api/detect-columns")
+async def detect_columns(file: UploadFile = File(...)):
+    """Read only the header row of a CSV or Parquet file and return column names."""
+    tmp_path = UPLOAD_DIR / f"tmp_{file.filename}"
+    try:
+        with open(tmp_path, "wb") as buf:
+            shutil.copyfileobj(file.file, buf)
+        columns = read_headers(tmp_path)
+        return {"columns": columns}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Column detection failed: {e}")
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
 
 @app.get("/api/download/{filename}")
 async def download_file(filename: str):

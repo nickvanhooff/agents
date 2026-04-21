@@ -171,10 +171,12 @@
                 <label for="csvFile">1. Upload Raw Data (CSV or Parquet)</label>
                 <input type="file" id="csvFile" name="file" accept=".csv,.parquet" required>
             </div>
-            
+
             <div class="form-group">
-                <label for="columnName">2. Column to Anonymize</label>
-                <input type="text" id="columnName" name="text_column" value="feedback_text" required>
+                <label for="columnSelect">2. Column to Anonymize</label>
+                <select id="columnSelect" style="display:none; width:100%; padding:10px; border:1px solid #ccc; border-radius:5px; box-sizing:border-box;"></select>
+                <input type="text" id="columnName" value="feedback_text" placeholder="Type column name" style="margin-top:6px;">
+                <span id="columnDetectStatus" class="form-hint"></span>
             </div>
 
             <div class="form-group">
@@ -269,6 +271,42 @@
     </div>
 
     <script>
+        // Auto-detect columns when a file is selected
+        document.getElementById('csvFile').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            const statusEl = document.getElementById('columnDetectStatus');
+            const select = document.getElementById('columnSelect');
+            const textInput = document.getElementById('columnName');
+            if (!file) return;
+
+            statusEl.textContent = 'Detecting columns...';
+            const fd = new FormData();
+            fd.append('file', file);
+
+            try {
+                const res = await fetch('/api/detect-columns', { method: 'POST', body: fd });
+                const data = await res.json();
+                if (res.ok && data.columns && data.columns.length > 0) {
+                    select.innerHTML = data.columns.map(c =>
+                        `<option value="${c}"${c === textInput.value ? ' selected' : ''}>${c}</option>`
+                    ).join('');
+                    // Pre-select a likely text column if none matched the current value
+                    if (!data.columns.includes(textInput.value)) {
+                        const preferred = ['feedback_text', 'open antwoord', 'text', 'feedback', 'comment', 'antwoord'];
+                        const match = data.columns.find(c => preferred.includes(c.toLowerCase()));
+                        if (match) select.value = match;
+                    }
+                    select.style.display = 'block';
+                    textInput.style.display = 'none';
+                    statusEl.textContent = `${data.columns.length} column(s) detected`;
+                } else {
+                    statusEl.textContent = data.detail || 'Could not detect columns — type manually.';
+                }
+            } catch {
+                statusEl.textContent = 'Detection failed — type column name manually.';
+            }
+        });
+
         // Toggle recall check options visibility
         document.getElementById('run_check').addEventListener('change', function() {
             document.getElementById('checkOptions').style.display = this.checked ? 'block' : 'none';
@@ -281,7 +319,8 @@
             const statusDiv = document.getElementById('status');
             const submitBtn = document.getElementById('submitBtn');
             const fileInput = document.getElementById('csvFile').files[0];
-            const columnName = document.getElementById('columnName').value;
+            const colSelect = document.getElementById('columnSelect');
+            const columnName = colSelect.style.display !== 'none' ? colSelect.value : document.getElementById('columnName').value;
             
             const progressContainer = document.getElementById('progressContainer');
             const progressBar = document.getElementById('progressBar');
