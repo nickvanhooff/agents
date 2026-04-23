@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from typing import Optional, Set
 
 import pandas as pd
@@ -12,6 +13,28 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Accepted layer IDs: "1"=Presidio, "2"=EU-PII-Safeguard, "3"=LLM. None = all layers.
 VALID_LAYER_IDS: Set[str] = {"1", "2", "3"}
+
+_POSSESSIVE_RE = re.compile(r"['’][sS]\b")
+
+
+def extend_spans_for_original(text: str, spans: list) -> list:
+    """
+    Adjust spans so they cover the original formatting that was stripped during NER normalization:
+    - Possessive suffix: Smith's -> extend end by 2 to include 's
+    - Surrounding quotes: "Smith" -> extend start/end by 1 to include the quotes
+    Works for any detected name, independent of the specific value.
+    """
+    result = []
+    for start, end, tag in spans:
+        new_start, new_end = start, end
+        if _POSSESSIVE_RE.match(text, new_end):
+            new_end += 2
+        if new_start > 0 and text[new_start - 1] == '"':
+            new_start -= 1
+        if new_end < len(text) and text[new_end] == '"':
+            new_end += 1
+        result.append((new_start, new_end, tag))
+    return result
 
 
 def apply_all_masks(text: str, spans: list) -> str:
@@ -61,7 +84,7 @@ async def anonymize_text_async(
     if layers is None or "2" in layers:
         l2_spans = eu_pii_collect_batch([text], config)[0]
 
-    result = apply_all_masks(text, l1_spans + l2_spans)
+    result = apply_all_masks(text, extend_spans_for_original(text, l1_spans + l2_spans))
 
     if layers is None or "3" in layers:
         result = await anonymize_with_llm_async(result, model_name, config)
@@ -81,7 +104,7 @@ async def process_dataframe_async(
     """Anonymize all rows in df[text_column]. Layer 2 runs as a single batch call per chunk."""
     logging.info(f"Starting async anonymization using model: {model_name}. Total rows: {len(df)}, batch size: {batch_size}")
     processed_df = df.copy()
-    texts = processed_df[text_column].tolist()
+    texts = processed_df[text_column].fillna("").astype(str).tolist()
     total_rows = len(texts)
     anonymized_texts = []
 
@@ -106,9 +129,9 @@ async def process_dataframe_async(
         else:
             layer2_spans = [[] for _ in batch]
 
-        # Merge spans from both layers and apply once to original texts
+        # Merge spans from both layers, extend possessives, and apply once to original texts
         pre_llm = [
-            apply_all_masks(text, l1 + l2)
+            apply_all_masks(text, extend_spans_for_original(text, l1 + l2))
             for text, l1, l2 in zip(batch, layer1_spans, layer2_spans)
         ]
 

@@ -2,7 +2,7 @@
 
 Dit document beschrijft stappen en keuzes rond vLLM/Ollama, Docker Compose, timeouts en de LLM-extractieprompt voor de Privacy Officer-agent. Structuur afgestemd op `eva-multi-agent/STAPPEN.md` (zelfde portfolioformaat).
 
-**Datum laatste update:** 2026-04-21 (Stap 34: Layer 2 GPU-ondersteuning en batch-optimalisatie)
+**Datum laatste update:** 2026-04-22 (Stap 38: Batch size in bestandsnaam)
 
 **Transparantie — Cursor:** Cursor is gebruikt voor iteratieve code-aanpassingen (compose, timeouts, `parse_llm_json_response`) en voor het opzetten van dit stappenlog in dezelfde vorm als Eva. Keuzes, foutanalyse uit logs en benchmark zijn eigen werk; Cursor versnelt uitwerking en herstructurering, geen vervanging van domeinbeslissingen.
 
@@ -849,6 +849,215 @@ De HF-pipeline buffert intern niet automatisch; `batch_size` moet expliciet word
 
 **Zelf bedacht:**
 `batch_size=len(texts)` i.p.v. een vaste waarde — zo schaalt de batch automatisch mee met wat er binnenkomt zonder hardcoded grenzen.
+
+---
+
+## Stap 34: Kolomnamen auto-detecteren bij bestandsupload
+
+**Datum:** 2026-04-22
+
+**Prompt (letterlijk):**
+> can you add a option that it detects the top rows of a csv or parquet or jsonl files, i mean the header names? so i can select it in: Column to Anonymize
+
+**Wat is er gedaan:**
+- `read_headers(source_path)` toegevoegd aan `data_loader.py`:
+  - CSV: `pd.read_csv(path, nrows=0)` — leest alleen de headerrij, geen data geladen
+  - Parquet: `pq.read_schema(path).names` — leest schema via pyarrow zonder data te laden
+  - Beide formaten verwerkt in dezelfde robuuste encoding/separator-loop als `load_csv`
+- Nieuw API-endpoint `POST /api/detect-columns` toegevoegd aan `app.py`:
+  - Ontvangt het geüploade bestand, slaat het tijdelijk op, roept `read_headers()` aan, verwijdert het tijdelijke bestand direct daarna
+  - Geeft `{"columns": [...]}` terug
+- `index.html` bijgewerkt:
+  - Bij bestandsselectie wordt direct `POST /api/detect-columns` aangeroepen via fetch
+  - Het tekstinvoerveld wordt vervangen door een `<select>` dropdown met de gedetecteerde kolomnamen
+  - Veelgebruikte kolomnamen (`feedback_text`, `open antwoord`, `text`, `feedback`) worden automatisch voorgeselecteerd als ze aanwezig zijn
+  - Als detectie mislukt blijft het tekstinvoerveld beschikbaar als fallback
+
+**Waarom:**
+Bij het testen met verschillende datasets was het telkens handmatig de kolomnaam invullen. De dropdown voorkomt typefouten en maakt het direct duidelijk welke kolommen beschikbaar zijn.
+
+**Bronnen:**
+- pandas `read_csv(nrows=0)` docs; pyarrow `read_schema` docs.
+
+**Zelf bedacht:**
+Tijdelijk bestand direct verwijderen na headerdetectie zodat de `uploads/`-map niet volloopt bij herhaalde detectie-aanvragen.
+
+---
+
+## Stap 35: Informatieve bestandsnaam op basis van testconfiguratie
+
+**Datum:** 2026-04-22
+
+**Prompt (letterlijk):**
+> can you add a option that it detects the top rows... i want that there is a option to convert it... make a service / only do this if i select the recall check
+
+**Wat is er gedaan:**
+- `_build_output_filename()` toegevoegd aan `app.py`
+- Formaat: `{stem}_L{lagen}[_{model}]_{seconden}s_recall{pct}.csv`
+  - Voorbeeld layer 1+2: `test_dataset_v2_L12_23s_recall80.csv`
+  - Voorbeeld met layer 3: `test_dataset_v2_L123_Qwen2.5-3B_47s_recall85.csv`
+- Naam wordt alleen zo gegenereerd als recall check actief is; anders `safe_{stem}.csv`
+- Modelnaam gesaniteerd: slash vervangen, laatste padcomponent, max 20 tekens
+- `elapsed_seconds` ook toegevoegd aan de API-response voor weergave in de UI
+- Timing meet uitsluitend de verwerkingstijd van `process_dataframe_async` — upload en recall check tellen niet mee
+
+**Waarom:**
+Bij benchmarking met meerdere configuraties (laagkeuze, modelkeuze, batchgrootte) was het onmogelijk om achteraf te achterhalen hoe een bestand gegenereerd was. De bestandsnaam bevat nu alle relevante testparameters.
+
+**Bronnen:**
+- Eigen ontwerp op basis van benchmarkbehoefte.
+
+**Zelf bedacht:**
+Alleen informatieve naam bij recall check — bij productieruns zonder check blijft de simpele `safe_`-naam zodat bestandsbeheer niet complexer wordt.
+
+---
+
+## Stap 36: Testbestand 15.000 rijen gerepareerd
+
+**Datum:** 2026-04-22
+
+**Prompt (letterlijk):**
+> & ‘c:\fontys\semester_4\group\agents\privacy_officer\test_dataset_v2 copy 15000.csv’ — fix the file so i can use it
+
+**Wat is er gedaan:**
+- Gecorrupte CSV geanalyseerd: bestand had inconsistente quoting (dubbelquotes, gemengde scheidingstekens `;` en `,`) — waarschijnlijk ontstaan door een fout in het kopieerscript.
+- Oplossing: clean bestand gegenereerd vanuit het originele `test_dataset_v2.csv` (100 rijen) door het 150× te herhalen:
+  ```python
+  df = pd.read_csv(‘test_dataset_v2.csv’, sep=’;’)
+  big = pd.concat([df] * 150, ignore_index=True)
+  big.to_csv(‘test_dataset_v2_15000.csv’, sep=’;’, index=False, encoding=’utf-8-sig’)
+  ```
+- Output: `test_dataset_v2_15000.csv` — 15.000 rijen, correcte semicolon-delimiter, juiste quoting.
+
+**Waarom:**
+Het gecorrupte bestand was onbruikbaar als input voor de anonymizer; pandas kon het niet betrouwbaar parsen.
+
+**Bronnen:**
+- Eigen analyse van het bestand; pandas `concat` docs.
+
+**Zelf bedacht:**
+Genereren vanuit het origineel is robuuster dan proberen het gecorrupte bestand te repareren — garantie op correcte structuur.
+
+---
+
+## Stap 37: Late masking architectuur — laag 1+2 collecteren, eenmalig masken
+
+**Datum:** 2026-04-22
+
+**Prompt (letterlijk):**
+> can it be a higher recall if i change the behavior of the step of mask it, because now it masks at the first layer and then sends the already masked layer to layer two and then it has less context [...] layer 3 has no role now, i not use it now. dont delete it i only disable it. make sure the mask happens at the end
+
+**Architectuurvraag besproken:**
+- Huidige aanpak: L1 maskeert → gemaskerde tekst naar L2 → gemaskerde tekst naar L3
+- Alternatief: L1 en L2 collecteren spans op de **originele tekst**, eenmalig masken aan het einde
+- Conclusie: verbetering mogelijk doordat L2-transformer meer originele context heeft; overlap-resolutie nodig bij gecombineerde spans
+
+**Wat is er gedaan:**
+
+**`layer1_presidio.py`** — nieuw: `collect_presidio_spans(text, config)`:
+- Roept `analyzer.analyze()` aan maar slaat `anonymizer.anonymize()` over
+- Retourneert `list[(start, end, tag)]` op basis van operators-config
+
+**`layer2_eu_pii.py`** — nieuw: `eu_pii_collect_batch(texts, config)`:
+- Roept `eu_pii_ner(texts, batch_size=len(texts))` aan op originele teksten
+- Retourneert `list[list[(start, end, tag)]]` per tekst zonder te masken
+
+**`privacy_agent.py`** — nieuw: `apply_all_masks(text, spans)`:
+- Overlap-resolutie: **langste span wint** (`docent Smith` klopt `Smith`)
+- Vervangingen **van rechts naar links** zodat eerder in de string de offsets geldig blijven
+- `anonymize_text_async` en `process_dataframe_async` herschreven: L1+L2 collecteren op originele tekst, spans samenvoegen, eenmalig masken, daarna optioneel L3
+
+**`index.html`** — Layer 3 standaard **uitgevinkt**
+
+**Maskering doet:**
+- *Detectie*: Presidio (spaCy + regex) en EU-PII-Safeguard (BERT-transformer)
+- *Maskering zelf*: pure Python string-slicing op de samengevoegde spanlijst — geen ML
+
+**Waarom:**
+Als L1 `Smith` maskeert naar `[NAME]` ziet L2 een contextverlies rondom die positie. Door beide lagen op de originele tekst te laten detecteren en pas daarna te masken behoudt L2 de volledige context. Verwachte verbetering: 1–3% recall op namen die dichtbij andere geanonimiseerde entiteiten staan.
+
+**Bronnen:**
+- Eigen architectuuranalyse; Presidio `RecognizerResult` docs; HF pipeline span-formaat.
+
+**Zelf bedacht:**
+Langste span wint als overlap-strategie — consistent met hoe Presidio zelf omgaat met overlappende recognizers. Rechts-naar-links vervangen is de standaardtechniek voor span-vervanging in NLP zonder een aparte offset-tracking.
+
+---
+
+## Stap 38: Batch size in de bestandsnaam
+
+**Datum:** 2026-04-22
+
+**Prompt (letterlijk):**
+> it is also good to know of what is the batch size in the name of the file when saving in
+
+**Wat is er gedaan:**
+- `batch_size` toegevoegd als parameter aan `_build_output_filename()` in `app.py`
+- Formaat uitgebreid: `{stem}_L{lagen}[_{model}]_b{batch_size}_{seconden}s_recall{pct}.csv`
+  - Voorbeeld: `test_dataset_v2_15000_L12_b200_47s_recall83.csv`
+- `batch_size = 200` als variabele gedefinieerd vóór de `process_dataframe_async`-aanroep en doorgegeven aan zowel de verwerking als de bestandsnaamgeneratie — één plek om te wijzigen
+
+**Waarom:**
+Batch size beïnvloedt de doorlooptijd en theoretisch de GPU-bezetting. Voor benchmarking is het relevant om te weten welke batch size bij welke meting hoorde.
+
+**Bronnen:**
+- Eigen benchmarkbehoefte.
+
+**Zelf bedacht:**
+`batch_size` als lokale variabele i.p.v. hardcoded in de aanroep — zo is één aanpassing voldoende als de waarde verandert.
+
+---
+
+## Stap 39: Oriëntatie op RAG-pipeline — chunking, embedding en vectordatabase
+
+**Datum:** 2026-04-22
+
+**Prompts (letterlijk):**
+> if i think about the next step, dont code it, only think. if i have the anominized data in a parquet format and and to chunk the data, after that have a embedding model and a vector database where the chunked data is stored, whats the need of a chunking in parquet if it is placed in a vector database? i want to know what is the benefit of parquet here if the vector database has own data. with the embedding model i want that i can send a question to it and it gives commen chunks back, how does that step work with vector database and embedding? and what is the reason for parquet here?
+
+> why whould i export to parquet then instead of jsonl or csv?
+
+> it has 15 k rows with 8 + questions, so it total there are 120k cells of chunks needed
+
+**Wat is er gedaan:**
+Geen code geschreven — denkstap om de RAG-pipeline te begrijpen vóór implementatie.
+
+Drie vragen beantwoord:
+
+1. **Wat doet Parquet in deze pipeline?**
+   - Parquet is de *source of truth* van de geanonimiseerde dataset — niet vervangen door de vectordatabase.
+   - De vectordatabase slaat alleen vectoren + kleine metadata op. Parquet bewaart alle kolommen en rijen.
+   - Bij herindexeren (ander embedding model) herlaad je vanuit Parquet, niet vanuit de vectordatabase.
+   - Gestructureerde queries (filter op thema, cursus, datum) doe je op Parquet/DuckDB, niet op een vectordatabase.
+   - Parquet = auditeerbaar, afgetekend artefact van de Privacy Officer.
+
+2. **Parquet vs JSONL vs CSV:**
+   - JSONL is het meest geschikt voor directe vectordatabase-ingestie: elke regel = één document, metadata als JSON, streaming ingestie mogelijk zonder speciale bibliotheek.
+   - CSV is eenvoudig maar heeft geen schemadwang en is trager bij grote datasets.
+   - Parquet is optimaal voor kolomgebaseerde analyses op grote datasets, maar vereist pyarrow.
+   - Conclusie voor 15k rijen: JSONL is de beste exportkeuze richting de vectordatabase; Parquet blijft als source of truth.
+
+3. **120k chunks — breed naar lang formaat:**
+   - 15.000 rijen × 8+ vragen = ~120.000 cellen, elk een afzonderlijk te embedden chunk.
+   - De dataset is *wide format* (15k rijen, 8 tekstkolommen). De vectordatabase heeft *long format* nodig: één chunk per record met metadata (row_id, vraagnaam, tekst, thema).
+   - De omzetting is een `pandas.melt` ("explode") vóór ingestie.
+   - Bij 120k chunks is het knelpunt niet het lezen van het bestand maar het embedden zelf (GPU, batch size, model keuze).
+   - Aanbevolen pipeline: `Parquet (wide, 15k) → melt → JSONL (long, 120k) → embedding model → vectordatabase`
+
+**Hoe embedding + vectordatabase retrieval werkt:**
+- *Index-fase (eenmalig)*: elke chunk → embedding model → dense vector (bijv. 384 floats) → opgeslagen als `{vector, metadata: {tekst, thema, vraag, row_id}}` in vectordatabase.
+- *Query-fase*: gebruikersvraag → zelfde embedding model → query-vector → approximate nearest-neighbor zoekopdracht in vectordatabase → meest gelijkende chunks teruggegeven als context.
+- Het embedding model is de brug: zowel chunks als de query gaan door hetzelfde model, zodat vergelijkbare betekenis dicht bij elkaar in de vectorruimte terecht komt.
+
+**Waarom:**
+Voordat er gecodeerd wordt is het belangrijk te begrijpen welke rol elk formaat speelt. De keuze tussen Parquet, JSONL en CSV hangt af van het gebruik: analytics vs. ingestie vs. menselijke leesbaarheid. Bij 120k chunks is de datastructuurtransformatie (wide → long) de kritieke stap, niet de bestandsindeling.
+
+**Bronnen:**
+- Eigen redenering op basis van bekende eigenschappen van Parquet, JSONL en vectordatabases.
+
+**Zelf bedacht:**
+- Het onderscheid tussen Parquet als *source of truth* en JSONL als *ingestie-formaat* — beide hebben een rol, ze vervangen elkaar niet.
+- De observatie dat bij 8 vragen per rij de `melt`-stap noodzakelijk is vóór ingestie, en dat dit het eigenlijke architectuurprobleem is, niet de bestandsindeling.
 
 ---
 

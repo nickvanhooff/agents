@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Optional
 
 from langdetect import detect
@@ -221,6 +222,23 @@ def build_presidio_operators(config: Optional[dict] = None) -> dict:
 anonymizer = AnonymizerEngine()
 register_custom_presidio_recognizers(analyzer)
 
+_POSSESSIVE_RE = re.compile(r"[''][sS]\b")
+_QUOTED_RE = re.compile(r'"([^"]+)"')
+_ALLCAPS_WORD_RE = re.compile(r'\b[A-Z]{2,}\b')
+
+
+def _normalize_for_ner(text: str) -> str:
+    """
+    Normalize text for NER while preserving exact string length so offsets stay valid.
+    - "SMITH"  -> "Smith"  (ALLCAPS -> Title case, same length)
+    - "Smith"  -> " Smith " (surrounding quotes become spaces, same length)
+    - Smith's  -> Smith    (possessive 's becomes spaces, same length)
+    """
+    text = _QUOTED_RE.sub(lambda m: f" {m.group(1)} ", text)
+    text = _ALLCAPS_WORD_RE.sub(lambda m: m.group(0).capitalize(), text)
+    text = _POSSESSIVE_RE.sub("  ", text)
+    return text
+
 
 def anonymize_with_presidio(text: str, config: Optional[dict] = None) -> str:
     """Run Layer 1 Presidio on a single text. Returns anonymized text."""
@@ -248,7 +266,7 @@ def collect_presidio_spans(text: str, config: Optional[dict] = None) -> list:
         except LangDetectException:
             lang = "nl"
 
-        results = analyzer.analyze(text=text, language=lang)
+        results = analyzer.analyze(text=_normalize_for_ner(text), language=lang)
         operators = build_presidio_operators(config)
 
         spans = []
@@ -259,5 +277,5 @@ def collect_presidio_spans(text: str, config: Optional[dict] = None) -> list:
                 spans.append((result.start, result.end, tag))
         return spans
     except Exception as e:
-        logging.error(f"Presidio collect error on '{text[:30]}...': {e}")
+        logging.error(f"Presidio collect error on '{str(text)[:30]}...': {e}")
         return []
