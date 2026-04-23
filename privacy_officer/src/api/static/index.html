@@ -188,12 +188,20 @@
                     </div>
                     <div class="checkbox-group">
                         <input type="checkbox" id="layer_2" name="layer_2" value="2" checked>
-                        <label for="layer_2" style="margin:0; font-weight:normal;">Layer 2: EU-PII-Safeguard (transformer)</label>
+                        <label for="layer_2" style="margin:0; font-weight:normal;">Layer 2: Transformer PII (select model below)</label>
                     </div>
                     <div class="checkbox-group">
                         <input type="checkbox" id="layer_3" name="layer_3" value="3">
                         <label for="layer_3" style="margin:0; font-weight:normal;">Layer 3: LLM (contextual)</label>
                     </div>
+                </div>
+                <div class="form-group" id="layer2ModelRow" style="margin-top:12px;">
+                    <label for="layer2_backend" style="font-size:14px;">Layer 2 model</label>
+                    <select id="layer2_backend" name="layer2_backend" style="width:100%; padding:10px; border:1px solid #ccc; border-radius:5px; box-sizing:border-box;">
+                        <option value="eu_pii_safeguard" selected>tabularisai / eu-pii-safeguard</option>
+                        <option value="openai_privacy_filter">openai / privacy-filter</option>
+                    </select>
+                    <span class="form-hint">Used only when Layer 2 is enabled. Apache-2.0; first run may download the model.</span>
                 </div>
                 <small class="form-hint">Uncheck layers to exclude them. All unchecked = all layers run.</small>
             </div>
@@ -312,6 +320,18 @@
             document.getElementById('checkOptions').style.display = this.checked ? 'block' : 'none';
         });
 
+        function syncLayer2ModelUi() {
+            const l2 = document.getElementById('layer_2');
+            const row = document.getElementById('layer2ModelRow');
+            const sel = document.getElementById('layer2_backend');
+            if (!l2 || !row || !sel) return;
+            const on = l2.checked;
+            sel.disabled = !on;
+            row.style.opacity = on ? '1' : '0.5';
+        }
+        document.getElementById('layer_2').addEventListener('change', syncLayer2ModelUi);
+        syncLayer2ModelUi();
+
         document.getElementById('uploadForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             
@@ -357,6 +377,7 @@
                 const cb = document.getElementById(id);
                 if (cb && cb.checked) formData.append('layers', cb.value);
             }
+            formData.append('layer2_backend', document.getElementById('layer2_backend').value);
             const runCheck = document.getElementById('run_check').checked;
             formData.append('run_check', runCheck);
             if (runCheck) {

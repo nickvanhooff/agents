@@ -14,7 +14,11 @@ import shutil
 from pathlib import Path
 
 # Important: we import our core offline Privacy Agent
-from src.core.privacy_agent import process_dataframe_async
+from src.core.privacy_agent import (
+    process_dataframe_async,
+    VALID_LAYER2_BACKENDS,
+    LAYER2_BACKEND_EU_PII,
+)
 from src.core.data_converter import convert_csv, SUPPORTED_FORMATS
 from src.core.data_loader import load_data, read_headers, SUPPORTED_INPUT_FORMATS
 
@@ -154,6 +158,7 @@ def _build_output_filename(
     stem: str,
     layers_set,
     model_name: str,
+    layer2_backend: str,
     elapsed: int,
     check_result,
     run_check: bool,
@@ -161,22 +166,28 @@ def _build_output_filename(
 ) -> str:
     """
     Build an informative output filename when recall check is active.
-    Format: {stem}_L{layers}[_{model}]_b{batch_size}_{elapsed}s_recall{pct}.csv
-    Falls back to safe_{stem}.csv when recall check is off or errored.
+    Format: {stem}_L{layers}[_{layer2}][_{model}]_b{batch_size}_{elapsed}s[_recall{pct}].csv
+    Includes the selected Layer 2 backend when Layer 2 is active.
     """
-    if not run_check or check_result is None or check_result.get("error"):
-        return f"safe_{stem}.csv"
-
     active = sorted(layers_set) if layers_set else ["1", "2", "3"]
     layer_str = "L" + "".join(active)
+
+    layer2_part = ""
+    if "2" in set(active):
+        layer2_slug = re.sub(r"[^a-zA-Z0-9._-]", "-", layer2_backend)[:24]
+        layer2_part = f"_{layer2_slug}"
 
     model_part = ""
     if "3" in set(active):
         slug = re.sub(r"[^a-zA-Z0-9._-]", "-", model_name.split("/")[-1])[:20]
         model_part = f"_{slug}"
 
+    base = f"{stem}_{layer_str}{layer2_part}{model_part}_b{batch_size}_{elapsed}s"
+    if not run_check or check_result is None or check_result.get("error"):
+        return f"{base}.csv"
+
     recall_pct = int(check_result.get("recall", 0))
-    return f"{stem}_{layer_str}{model_part}_b{batch_size}_{elapsed}s_recall{recall_pct}.csv"
+    return f"{base}_recall{recall_pct}.csv"
 
 
 @app.post("/api/anonymize")
@@ -195,6 +206,7 @@ async def anonymize_csv(
     anon_bsn: bool = Form(True),
     anon_postcode: bool = Form(True),
     layers: List[str] = Form(default=[]),
+    layer2_backend: str = Form(LAYER2_BACKEND_EU_PII),
     run_check: bool = Form(False),
     pii_reference_column: str = Form("voorkomende tekst van pii of indirect wat eruit gehaald moet worden"),
 ):
@@ -242,6 +254,16 @@ async def anonymize_csv(
                 detail=f"Invalid layer(s): {sorted(invalid)}. Valid: 1, 2, 3."
             )
 
+    l2b = (layer2_backend or "").strip().lower().replace("-", "_")
+    if l2b not in VALID_LAYER2_BACKENDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid layer2_backend: {layer2_backend!r}. Valid: {sorted(VALID_LAYER2_BACKENDS)}.",
+        )
+    # Only apply when Layer 2 is part of the run (all layers or "2" selected)
+    if layers_set is not None and "2" not in layers_set:
+        l2b = LAYER2_BACKEND_EU_PII  # ignored path; keep default for logging consistency
+
     config = {
         "names": parse_bool(anon_names),
         "locations": parse_bool(anon_locations),
@@ -263,9 +285,20 @@ async def anonymize_csv(
         model_name = os.getenv('OLLAMA_MODEL', 'aya-expanse:8b')
     
     # 3. Run anonymization — measure wall time for benchmarking filename
-    batch_size = 200
+    # Higher chunk size means fewer Python/transformer round-trips on large CSVs.
+    # Tune with PIPELINE_BATCH_SIZE if you hit GPU memory limits.
+    batch_size = max(1, int(os.getenv("PIPELINE_BATCH_SIZE", "512")))
     t_start = time.time()
-    processed_df = await process_dataframe_async(df, text_column=text_column, model_name=model_name, config=config, progress_state=progress_state, layers=layers_set, batch_size=batch_size)
+    processed_df = await process_dataframe_async(
+        df,
+        text_column=text_column,
+        model_name=model_name,
+        config=config,
+        progress_state=progress_state,
+        layers=layers_set,
+        layer2_backend=l2b,
+        batch_size=batch_size,
+    )
     elapsed = int(time.time() - t_start)
 
     # 4. Recall check (optional)
@@ -278,7 +311,16 @@ async def anonymize_csv(
             check_result = {"error": f"Column '{pii_reference_column}' not found in CSV — check skipped."}
 
     # 5. Build output filename — informative name when recall check is active
-    output_filename = _build_output_filename(output_stem, layers_set, model_name, elapsed, check_result, run_check, batch_size)
+    output_filename = _build_output_filename(
+        output_stem,
+        layers_set,
+        model_name,
+        l2b,
+        elapsed,
+        check_result,
+        run_check,
+        batch_size,
+    )
     output_path = UPLOAD_DIR / output_filename
     processed_df.to_csv(output_path, index=False)
 

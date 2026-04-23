@@ -5,14 +5,70 @@ from typing import Optional, Set
 
 import pandas as pd
 
-from src.core.layers.layer1_presidio import anonymize_with_presidio, collect_presidio_spans
-from src.core.layers.layer2_eu_pii import eu_pii_safeguard_anonymize_batch, eu_pii_collect_batch
+from src.core.layers.layer1_presidio import collect_presidio_spans
 from src.core.layers.layer3_llm import anonymize_with_llm_async
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Accepted layer IDs: "1"=Presidio, "2"=EU-PII-Safeguard, "3"=LLM. None = all layers.
 VALID_LAYER_IDS: Set[str] = {"1", "2", "3"}
+
+# Layer 2 transformer backend when layer "2" is active: Hugging Face model choice.
+LAYER2_BACKEND_EU_PII = "eu_pii_safeguard"
+LAYER2_BACKEND_OPENAI_OPF = "openai_privacy_filter"
+VALID_LAYER2_BACKENDS: Set[str] = {LAYER2_BACKEND_EU_PII, LAYER2_BACKEND_OPENAI_OPF}
+
+
+def collect_layer2_spans_batch(
+    texts: list,
+    config: Optional[dict],
+    layer2_backend: str,
+) -> list:
+    """Dispatch to the selected Layer 2 token-classification backend."""
+    if layer2_backend == LAYER2_BACKEND_OPENAI_OPF:
+        from src.core.layers.layer2_openai_privacy_filter import (
+            openai_privacy_filter_collect_batch,
+        )
+
+        return openai_privacy_filter_collect_batch(texts, config)
+    if layer2_backend == LAYER2_BACKEND_EU_PII:
+        from src.core.layers.layer2_eu_pii import eu_pii_collect_batch
+
+        return eu_pii_collect_batch(texts, config)
+    logging.warning(
+        "Unknown layer2_backend %r, falling back to %s",
+        layer2_backend,
+        LAYER2_BACKEND_EU_PII,
+    )
+    from src.core.layers.layer2_eu_pii import eu_pii_collect_batch
+
+    return eu_pii_collect_batch(texts, config)
+
+
+def _process_chunk_sync(
+    batch: list,
+    config: Optional[dict],
+    layers: Optional[Set[str]],
+    layer2_backend: str,
+) -> list:
+    """
+    Run sync Layer 1 + Layer 2 work outside the event loop.
+    This keeps progress SSE responsive while heavy CPU/GPU work runs.
+    """
+    if layers is None or "1" in layers:
+        layer1_spans = [collect_presidio_spans(t, config) for t in batch]
+    else:
+        layer1_spans = [[] for _ in batch]
+
+    if layers is None or "2" in layers:
+        layer2_spans = collect_layer2_spans_batch(list(batch), config, layer2_backend)
+    else:
+        layer2_spans = [[] for _ in batch]
+
+    return [
+        apply_all_masks(text, extend_spans_for_original(text, l1 + l2))
+        for text, l1, l2 in zip(batch, layer1_spans, layer2_spans)
+    ]
 
 _POSSESSIVE_RE = re.compile(r"['’][sS]\b")
 
@@ -65,7 +121,8 @@ async def anonymize_text_async(
     text: str,
     model_name: str = 'aya-expanse:8b',
     config: Optional[dict] = None,
-    layers: Optional[Set[str]] = None
+    layers: Optional[Set[str]] = None,
+    layer2_backend: str = LAYER2_BACKEND_EU_PII,
 ) -> str:
     """
     Anonymize a single text. Layers 1+2 collect spans from the original text
@@ -82,7 +139,7 @@ async def anonymize_text_async(
 
     l2_spans = []
     if layers is None or "2" in layers:
-        l2_spans = eu_pii_collect_batch([text], config)[0]
+        l2_spans = collect_layer2_spans_batch([text], config, layer2_backend)[0]
 
     result = apply_all_masks(text, extend_spans_for_original(text, l1_spans + l2_spans))
 
@@ -99,10 +156,14 @@ async def process_dataframe_async(
     config: Optional[dict] = None,
     progress_state: Optional[dict] = None,
     layers: Optional[Set[str]] = None,
+    layer2_backend: str = LAYER2_BACKEND_EU_PII,
     batch_size: int = 1000
 ) -> pd.DataFrame:
     """Anonymize all rows in df[text_column]. Layer 2 runs as a single batch call per chunk."""
-    logging.info(f"Starting async anonymization using model: {model_name}. Total rows: {len(df)}, batch size: {batch_size}")
+    logging.info(
+        f"Starting async anonymization using model: {model_name}, layer2_backend: {layer2_backend}. "
+        f"Total rows: {len(df)}, batch size: {batch_size}"
+    )
     processed_df = df.copy()
     texts = processed_df[text_column].fillna("").astype(str).tolist()
     total_rows = len(texts)
@@ -115,25 +176,13 @@ async def process_dataframe_async(
         if progress_state is not None:
             progress_state["status"] = f"Processing items {batch_start + 1}-{done_so_far} of {total_rows}..."
 
-        # Layer 1: collect spans from original texts — sync, per text
-        if layers is None or "1" in layers:
-            layer1_spans = []
-            for t in batch:
-                layer1_spans.append(collect_presidio_spans(t, config))
-        else:
-            layer1_spans = [[] for _ in batch]
-
-        # Layer 2: collect spans from original texts — one batch GPU call
-        if layers is None or "2" in layers:
-            layer2_spans = eu_pii_collect_batch(list(batch), config)
-        else:
-            layer2_spans = [[] for _ in batch]
-
-        # Merge spans from both layers, extend possessives, and apply once to original texts
-        pre_llm = [
-            apply_all_masks(text, extend_spans_for_original(text, l1 + l2))
-            for text, l1, l2 in zip(batch, layer1_spans, layer2_spans)
-        ]
+        pre_llm = await asyncio.to_thread(
+            _process_chunk_sync,
+            batch,
+            config,
+            layers,
+            layer2_backend,
+        )
 
         # Layer 3: LLM — async concurrent per text, runs on already-masked output
         if layers is None or "3" in layers:

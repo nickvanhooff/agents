@@ -1,39 +1,29 @@
+import os
 import re
 import logging
 from typing import Optional
 
 import torch
 from transformers import pipeline as hf_pipeline
+from src.core.layers.layer2_text_norm import normalize_for_ner
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-_POSSESSIVE_RE = re.compile(r"['’][sS]\b")
-_QUOTED_RE = re.compile(r'"([^"]+)"')
-_ALLCAPS_WORD_RE = re.compile(r'\b[A-Z]{2,}\b')
-
-
-def _normalize_for_ner(text: str) -> str:
-    """
-    Normalize text for NER while preserving exact string length so offsets stay valid.
-    - "SMITH"  -> "Smith"  (ALLCAPS -> Title case, same length)
-    - "Smith"  -> " Smith " (surrounding quotes become spaces, same length)
-    - Smith's  -> Smith    (possessive 's becomes spaces, same length)
-    """
-    text = _QUOTED_RE.sub(lambda m: f" {m.group(1)} ", text)
-    text = _ALLCAPS_WORD_RE.sub(lambda m: m.group(0).capitalize(), text)
-    text = _POSSESSIVE_RE.sub("  ", text)
-    return text
-
 
 _device = 0 if torch.cuda.is_available() else -1
+_use_fp16 = os.environ.get("LAYER2_FP16", "").lower() in {"1", "true", "yes"}
 logging.info(f"Loading tabularisai/eu-pii-safeguard model on {'GPU (cuda:0)' if _device == 0 else 'CPU'} (downloads on first run)...")
 try:
-    eu_pii_ner = hf_pipeline(
-        "token-classification",
-        model="tabularisai/eu-pii-safeguard",
-        aggregation_strategy="simple",
-        device=_device,
-    )
+    pipeline_kwargs = {
+        "task": "token-classification",
+        "model": "tabularisai/eu-pii-safeguard",
+        "aggregation_strategy": "simple",
+        "device": _device,
+    }
+    if _device == 0 and _use_fp16:
+        pipeline_kwargs["model_kwargs"] = {"torch_dtype": torch.float16}
+        logging.info("LAYER2_FP16 enabled for eu-pii-safeguard.")
+    eu_pii_ner = hf_pipeline(**pipeline_kwargs)
     logging.info("eu-pii-safeguard loaded successfully.")
 except Exception as e:
     eu_pii_ner = None
@@ -119,7 +109,7 @@ def eu_pii_collect_batch(texts: list, config: Optional[dict] = None) -> list:
         return [[] for _ in texts]
 
     try:
-        texts_for_ner = [_normalize_for_ner(t) for t in texts]
+        texts_for_ner = [normalize_for_ner(t) for t in texts]
         batch_entities = eu_pii_ner(texts_for_ner, batch_size=len(texts_for_ner))
     except Exception as e:
         logging.error(f"eu-pii-safeguard collect batch error: {e}")

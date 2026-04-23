@@ -7,6 +7,8 @@ services:
       - .:/app
       - huggingface_cache:/root/.cache/huggingface
     environment:
+      - PIPELINE_BATCH_SIZE=${PIPELINE_BATCH_SIZE:-512}
+      - LAYER2_FP16=${LAYER2_FP16:-0}
       - LLM_BACKEND=${LLM_BACKEND:-vllm}
       - VLLM_HOST=http://vllm:8000
       - VLLM_MODEL=${VLLM_MODEL:-Qwen/Qwen2.5-3B-Instruct-AWQ}
