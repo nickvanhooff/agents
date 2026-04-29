@@ -2,7 +2,7 @@
 
 Dit document beschrijft stappen en keuzes rond vLLM/Ollama, Docker Compose, timeouts en de LLM-extractieprompt voor de Privacy Officer-agent. Structuur afgestemd op `eva-multi-agent/STAPPEN.md` (zelfde portfolioformaat).
 
-**Datum laatste update:** 2026-04-22 (Stap 38: Batch size in bestandsnaam)
+**Datum laatste update:** 2026-04-24 (Stap 42: entity carry-forward — namen uit één rij meenemen naar andere rijen)
 
 **Transparantie — Cursor:** Cursor is gebruikt voor iteratieve code-aanpassingen (compose, timeouts, `parse_llm_json_response`) en voor het opzetten van dit stappenlog in dezelfde vorm als Eva. Keuzes, foutanalyse uit logs en benchmark zijn eigen werk; Cursor versnelt uitwerking en herstructurering, geen vervanging van domeinbeslissingen.
 
@@ -1059,6 +1059,109 @@ Voordat er gecodeerd wordt is het belangrijk te begrijpen welke rol elk formaat 
 - Het onderscheid tussen Parquet als *source of truth* en JSONL als *ingestie-formaat* — beide hebben een rol, ze vervangen elkaar niet.
 - De observatie dat bij 8 vragen per rij de `melt`-stap noodzakelijk is vóór ingestie, en dat dit het eigenlijke architectuurprobleem is, niet de bestandsindeling.
 
+---
+
+## Stap 40: Tekst-normalisatie voor NER — possessive ‘s, ALLCAPS, aanhalingstekens
+
+**Datum:** 2026-04-23
+
+**Prompt (letterlijk):**
+*(geen expliciete prompt — probleem ontdekt bij analyse van false negatives na late-masking architectuur)*
+
+**Wat is er gedaan:**
+- `_normalize_for_ner(text)` toegevoegd aan zowel `layer1_presidio.py` als `layer2_eu_pii.py`.
+- Drie bewerkingen, alle **lengte-bewarend** zodat span-offsets geldig blijven:
+  - `"SMITH"` → `"Smith"` (ALLCAPS woord → Title case, zelfde lengte)
+  - `"Smith"` → `" Smith "` (aanhalingstekens rondom naam → spaties, zelfde lengte)
+  - `Smith’s` → `Smith  ` (possessive `’s` → twee spaties, zelfde lengte)
+- `collect_presidio_spans()` en `eu_pii_collect_batch()` passen de normalisatie toe vóór NER-analyse; de originele tekst wordt daarna gebruikt voor maskering — offsets lopen één-op-één.
+
+**Waarom:**
+spaCy (Layer 1) en de HF-transformer (Layer 2) herkenden namen in contexten als `"Jansen’s feedback"` niet: het apostrof-s verraadt het NER-model. ALLCAPS-namen (`JANSEN`) werden soms ook gemist. De normalisatie lost dit op zonder de output te veranderen, omdat alleen de analyseinput wordt aangepast.
+
+**Bronnen:**
+- Eigen foutanalyse op basis van false negatives bij test_dataset_v2 (namen met possessive en quotes).
+- Python `re` docs.
+
+**Zelf bedacht:**
+Lengte-bewarende substitutie als vereiste — bij de late-masking architectuur (Stap 37) worden spans op de originele tekst toegepast; als normalisatie de lengte zou wijzigen, slaan de offsets nergens op.
+
+---
+
+## Stap 41: openai/privacy-filter als tweede Layer 2 optie
+
+**Datum:** 2026-04-23
+
+**Prompt (letterlijk):**
+*(geen expliciete prompt — eigen onderzoek naar betere Layer 2 NER-modellen)*
+
+**Wat is er gedaan:**
+
+**`layer2_text_norm.py`** — gedeelde normalisatiemodule aangemaakt:
+- `normalize_for_ner(text)` geëxtraheerd uit de twee losse `_normalize_for_ner()`-implementaties in Layer 1 en Layer 2 — één centrale plek.
+
+**`layer2_openai_privacy_filter.py`** — nieuw bestand:
+- Laadt `openai/privacy-filter` (token-classification, Apache-2.0) via HF `transformers.pipeline`.
+- Auto-detectie GPU/CPU via `torch.cuda.is_available()`; optionele FP16 via `LAYER2_FP16` env-var.
+- `openai_privacy_filter_collect_batch(texts, config)` — zelfde interface als `eu_pii_collect_batch`: retourneert `list[list[(start, end, tag)]]`.
+- Label-mapping: `private_person` → `[NAME]`, `private_address` → `[LOCATION]`, overig → `[PII]`.
+- BIOES-prefix stripping (`B-`, `I-`, `E-`, `S-`) voor labels die het model soms retourneert.
+- Als het model niet laadt: graceful fallback (leeg spans, geen crash).
+
+**`privacy_agent.py`** — Layer 2 backend selectable:
+- `LAYER2_BACKEND_EU_PII = "eu_pii_safeguard"` en `LAYER2_BACKEND_OPF = "openai_privacy_filter"` als constanten.
+- `VALID_LAYER2_BACKENDS` set voor validatie.
+- `process_dataframe_async()` en `anonymize_text_async()` ontvangen `layer2_backend` parameter; dispatchen naar de juiste collector.
+
+**`app.py`**:
+- `layer2_backend: str = Form(LAYER2_BACKEND_EU_PII)` toegevoegd aan `/api/anonymize`.
+- Validatie tegen `VALID_LAYER2_BACKENDS`; foutieve waarde geeft `HTTP 400`.
+- Layer 2 backend-naam opgenomen in de gegenereerde bestandsnaam (na laag-indicator): `test_dataset_v2_L12_eu_pii_safeguard_b512_47s_recall83.csv`.
+- `PIPELINE_BATCH_SIZE` env-var (default 512) als centrale batchgrootte-instelling.
+
+**`index.html`**:
+- Dropdown "Layer 2 model" toegevoegd onder Layer 2 checkbox (standaard `eu-pii-safeguard`; optie `openai/privacy-filter`).
+- Dropdown disabled als Layer 2 uitgevinkt is.
+
+**Waarom:**
+`tabularisai/eu-pii-safeguard` is getraind op Europese PII-patronen maar heeft moeite met sommige Nederlandse namen in feedbackcontext. `openai/privacy-filter` heeft een ander trainingsdomein en kan andere entiteiten oppikken. Door beide beschikbaar te maken kan per dataset getest worden welk model de betere recall geeft zonder codewijzigingen.
+
+**Bronnen:**
+- [openai/privacy-filter op Hugging Face](https://huggingface.co/openai/privacy-filter) — Apache-2.0 licentie.
+- HF `transformers.pipeline` docs (token-classification, aggregation_strategy).
+
+**Zelf bedacht:**
+- `layer2_text_norm.py` als gedeelde module in plaats van duplicatie — consistent met de laagstructuur die in Stap 28 is ingevoerd.
+- BIOES-prefix stripping als losstaande helper (`_strip_bioes_prefix`) zodat de tag-mapping leesbaar blijft.
+- Graceful fallback als het model niet laadt — de pipeline crasht niet bij een ontbrekend model, maar slaat Layer 2 over.
+
+---
+
+## Stap 42: Entity carry-forward — namen uit één rij meenemen naar andere rijen
+
+**Datum:** 2026-04-24
+
+**Wat is er gedaan:**
+- Ontdekt waarom een naam zoals "Smith" in de zin *"received no response from Smith"* niet wordt opgepikt door Layer 1 en Layer 2, terwijl dezelfde naam in andere zinnen wél wordt gedetecteerd.
+- Oorzaak: NER-modellen werken per tekst en gebruiken bidirectionele context. "Smith" aan het einde van een zin zonder titel, voornaam of andere namen in de buurt valt onder de drempelwaarde van spaCy. Layer 2 krijgt daarna al een `[PII]`-placeholder in de tekst, wat de grammaticale context verder verstoort.
+- `_build_carryforward_spans(texts, all_raw_spans)` geïmplementeerd in `privacy_agent.py`:
+  - Verzamelt alle unieke `[NAME]`-strings (≥ 3 tekens) uit de spans van alle rijen in de batch.
+  - Zoekt voor elke rij via regex (`\bNaam\b`, case-insensitief) naar voorkomens van bekende namen die nog niet gedekt zijn door een bestaande span.
+  - Retourneert extra spans die worden samengevoegd met de Layer 1+2 spans vóór de maskeerstap.
+- `_process_chunk_sync` aangepast: bouwt eerst `combined` spans (L1 + L2), roept dan `_build_carryforward_spans` aan, en geeft alle spans samen door aan `apply_all_masks`.
+
+**Waarom:**
+Als "Smith" in rij 3 wordt gevonden maar niet in rij 7, is er geen reden aan te nemen dat het in rij 7 geen persoonsnaam is — het is dezelfde dataset. Het carry-forward mechanisme hergebruikt bestaande detecties zonder extra model-aanroepen. Prestatieimpact is verwaarloosbaar: alleen regex-zoekacties over al berekende spans.
+
+**Bronnen:**
+- Eigen analyse van waarom NER context-afhankelijk is en waarom `[PII]`-placeholders de volgende laag benadelen.
+- Python `re`-module voor `\b`-woordgrenspatronen.
+
+**Zelf bedacht:**
+Eigen idee na gebruikersvraag: "als Smith in één zin gevonden wordt, waarom wordt het niet overgenomen naar andere zinnen?". Geen tutorial gevolgd — directe vertaling van het probleem naar een batch-brede namenset met regex carry-forward.
+
+**Resultaat:**
+Smith wordt verwijderd uit de tekst.
 ---
 
 ## Snelle commando’s (hergebruik)

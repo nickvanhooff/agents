@@ -449,9 +449,15 @@
                             let extrasList = (c.top_extras && c.top_extras.length)
                                 ? c.top_extras.map(e => `<li><code>${e.value}</code> (${e.count}x)</li>`).join('')
                                 : '<li>Geen onverwachte vervangingen gevonden.</li>';
+                            let indirectList = (c.top_indirect_missed && c.top_indirect_missed.length)
+                                ? c.top_indirect_missed.map(m => `<li><code>${m.value}</code> (${m.count}x)</li>`).join('')
+                                : '<li>Geen indirecte PII gemist.</li>';
                             const extrasBadge = c.extra_count > 0
                                 ? `<span style="margin-left:12px; font-size:13px; color:#7D4E00; background:#fff3cd; padding:2px 8px; border-radius:4px;">⚠️ ${c.extra_count} rij(en) met onverwachte vervangingen</span>`
                                 : `<span style="margin-left:12px; font-size:13px; color:#155724; background:#d4edda; padding:2px 8px; border-radius:4px;">✔ Geen false positives</span>`;
+                            const indirectBadge = (c.indirect_missed_count > 0)
+                                ? `<span style="margin-left:12px; font-size:13px; color:#4a235a; background:#f3e5f5; padding:2px 8px; border-radius:4px;">🔍 ${c.indirect_missed_count} indirecte PII gemist</span>`
+                                : '';
                             checkHtml = `
                             <div style="margin-top:15px; padding:15px; background:${recallBg}; border-radius:5px; border:1px solid #ccc;">
                                 <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
@@ -459,6 +465,7 @@
                                         📊 Recall: ${c.recall}% &nbsp;(${c.fully_anonymized}/${c.total} rijen volledig geanonimiseerd)
                                     </strong>
                                     ${extrasBadge}
+                                    ${indirectBadge}
                                 </div>
                                 <details style="margin-top:10px;">
                                     <summary style="cursor:pointer; font-weight:bold;">Per thema</summary>
@@ -479,6 +486,11 @@
                                     <summary style="cursor:pointer; font-weight:bold;">Onverwachte vervangingen (false positives)</summary>
                                     <ul style="margin:8px 0; padding-left:20px; font-size:13px;">${extrasList}</ul>
                                 </details>
+                                ${c.indirect_missed_count > 0 ? `
+                                <details style="margin-top:8px;">
+                                    <summary style="cursor:pointer; font-weight:bold; color:#4a235a;">Gemiste indirecte PII (${c.indirect_missed_count})</summary>
+                                    <ul style="margin:8px 0; padding-left:20px; font-size:13px;">${indirectList}</ul>
+                                </details>` : ''}
                             </div>`;
                         }
                     }

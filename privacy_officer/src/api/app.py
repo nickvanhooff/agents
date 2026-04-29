@@ -89,6 +89,8 @@ def _run_recall_check(df: pd.DataFrame, anon_col: str, pii_col: str) -> dict:
     pii_col format per cell: "naam:Smith, email:j.smith@fontys.nl"
     """
     results, missed_per_row, extras_per_row = [], [], []
+    # Track indirect missed values separately (type prefix starts with "indirect_")
+    indirect_missed_values: list[str] = []
 
     # Derive original text column from the anonymized column name (strip "anonymized_" prefix)
     orig_col = anon_col[len("anonymized_"):] if anon_col.startswith("anonymized_") else None
@@ -104,12 +106,14 @@ def _run_recall_check(df: pd.DataFrame, anon_col: str, pii_col: str) -> dict:
             pair = pair.strip()
             if ":" not in pair:
                 continue
-            _, value = pair.split(":", 1)
+            pii_type, value = pair.split(":", 1)
             value = value.strip()
             if value:
                 expected.append(value)
                 if value.lower() in anon_text.lower():
                     missed.append(value)
+                    if pii_type.strip().lower().startswith("indirect"):
+                        indirect_missed_values.append(value)
         results.append(len(missed) == 0)
         missed_per_row.append(", ".join(missed))
 
@@ -142,15 +146,23 @@ def _run_recall_check(df: pd.DataFrame, anon_col: str, pii_col: str) -> dict:
     all_extras = [v for row in extras_per_row for v in row.split(", ") if v]
     top_extras = [{"value": v, "count": c} for v, c in Counter(all_extras).most_common()]
 
+    indirect_missed_count = len(indirect_missed_values)
+    top_indirect_missed = [
+        {"value": v, "count": c}
+        for v, c in Counter(indirect_missed_values).most_common()
+    ]
+
     return {
-        "recall":           recall,
-        "total":            total,
-        "fully_anonymized": fully_anon,
-        "missed_count":     total - fully_anon,
-        "extra_count":      extra_count,
-        "per_theme":        per_theme,
-        "top_missed":       top_missed,
-        "top_extras":       top_extras,
+        "recall":                 recall,
+        "total":                  total,
+        "fully_anonymized":       fully_anon,
+        "missed_count":           total - fully_anon,
+        "extra_count":            extra_count,
+        "per_theme":              per_theme,
+        "top_missed":             top_missed,
+        "top_extras":             top_extras,
+        "indirect_missed_count":  indirect_missed_count,
+        "top_indirect_missed":    top_indirect_missed,
     }
 
 
