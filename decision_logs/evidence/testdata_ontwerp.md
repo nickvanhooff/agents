@@ -1,6 +1,6 @@
 # Evidence — Ontwerp testdata voor recall- en precisionmeting
 
-**Hoort bij:** Decision Log Entry #4 — Hoe ontwerp ik testdata en een automatische check?  
+**Hoort bij:** Hoe ontwerp ik testdata en een automatische check?  
 **Stappen.md:** stap 15 en 16  
 **Datum:** 2026-04-15
 
