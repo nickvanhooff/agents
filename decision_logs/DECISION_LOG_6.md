@@ -24,7 +24,7 @@ De pipeline moet ~15.000 rijen verwerken. De vraag was of Parquet als invoerform
 **Aangetoonde leeruitkomsten:**
 
 - [x] LO1: Analyseren — vergelijkende meting CSV vs Parquet op laadtijd, geheugen en pipelinetijd
-- [ ] LO2: Adviseren
+- [x] LO2: Adviseren — aanbeveling Parquet boven ~1.000 rijen onderbouwd met meetresultaten (sectie 3 + Conclusie)
 - [x] LO3: Ontwerpen — bewuste formaaткeuze op basis van meting op realistische schaal
 - [x] LO4: Realiseren — Parquet ondersteuning geïmplementeerd naast CSV
 - [ ] LO5: Beheren & Controleren
@@ -114,13 +114,16 @@ Alle drie de criteria zijn gehaald op basis van directe meting. Parquet is 5–7
 
 ### 9. Implementatiebewijs
 
-| Wat                                          | Bewijs                                                                                                                                                  |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CSV vs Parquet laadtijd analyse              | Stap 27 in [stappen.md](https://github.com/nickvanhooff/agents/blob/main/privacy_officer/stappen.md)                                                    |
-| Parquet als invoerformaat (`data_loader.py`) | Stap 30 in [stappen.md](https://github.com/nickvanhooff/agents/blob/main/privacy_officer/stappen.md)                                                    |
-| Kolomdetectie voor CSV en Parquet            | Stap 34 in [stappen.md](https://github.com/nickvanhooff/agents/blob/main/privacy_officer/stappen.md) — `read_headers()`, `/api/detect-columns`          |
-| Code implementatie                           | [Commit `b690c58`](https://github.com/nickvanhooff/agents/commit/b690c58)                                                                               |
-| Benchmark groepsgenoot                       | [parquet_vs_csv_benchmark.md](https://github.com/nickvanhooff/agents/blob/main/decision_logs/evidence/parquet_vs_csv_benchmark.md) `@parquet_benchmark` |
+| Wat                                          | Bewijs                                                                                                                                         |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| CSV vs Parquet laadtijd analyse              | Stap 27 in [stappen.md](https://github.com/nickvanhooff/agents/blob/main/privacy_officer/stappen.md)                                           |
+| Parquet als invoerformaat (`data_loader.py`) | Stap 30 in [stappen.md](https://github.com/nickvanhooff/agents/blob/main/privacy_officer/stappen.md)                                           |
+| Kolomdetectie voor CSV en Parquet            | Stap 34 in [stappen.md](https://github.com/nickvanhooff/agents/blob/main/privacy_officer/stappen.md) — `read_headers()`, `/api/detect-columns` |
+| Code implementatie                           | [Commit `b690c58`](https://github.com/nickvanhooff/agents/commit/b690c58)                                                                      |
+| 6 benchmark runs toegevoegd (CSV + Parquet)  | [Commit `e498452`](https://github.com/nickvanhooff/agents/commit/e498452) — outputbestanden alle lagen                                         |
+| Screenshot Claude Code prompt als bewijs     | [Commit `55bbd9c`](https://github.com/nickvanhooff/agents/commit/55bbd9c) — realisatie evidence gedocumenteerd                                 |
+| Laagbenchmark evidence (15.000 rijen)        | [laag_benchmark_15000.md](./evidence/laag_benchmark_15000.md)                                                                                  |
+| Benchmark groepsgenoot                       | [parquet_vs_csv_benchmark.md](./evidence/parquet_vs_csv_benchmark.md)                                                                          |
 
 ---
 
