@@ -74,6 +74,14 @@ Dezelfde tijd bij twee aparte runs bevestigt dat de meting reproduceerbaar is.
 
 ---
 
+## Realisatie van dit bestand
+
+Dit evidence bestand is aangemaakt op basis van de volgende opdracht aan Claude Code (screenshot van de prompt):
+
+![Prompt gebruikt voor aanmaken benchmarkbestand](./used_promt_for_benchmarks_file.png)
+
+---
+
 ## DOT-framework verantwoording
 
 **Methode: Lab — gecontroleerde A/B-test**
