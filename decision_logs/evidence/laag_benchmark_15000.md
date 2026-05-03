@@ -7,34 +7,45 @@
 
 ---
 
-## Overzicht alle runs
+## Dataset
 
-| # | Input | Lagen | Tijd | Recall | Volledig geanon. | Output |
-|---|-------|-------|------|--------|-----------------|--------|
-| 1 | CSV | L1 only | 243s | **78%** | 11.700/15.000 | [↓ CSV](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/test_dataset_v2_15000_L1_b512_243s_recall78_csv_inputs_only_layer1.csv) |
-| 2 | CSV | L2 only | 135s | **68%** | 10.200/15.000 | [↓ CSV](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/test_dataset_v2_15000_L2_eu_pii_safeguard_b512_135s_recall68_csv_input_only_layer2.csv) |
-| 3 | CSV | L1+L2 | 394s | **85%** | 12.750/15.000 | [↓ CSV](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/test_dataset_v2_15000_L12_eu_pii_safeguard_b512_394s_recall85.csv) |
-| 4 | Parquet | L1 only | 230s | **78%** | 11.700/15.000 | [↓ CSV](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/test_dataset_v2_15000_L1_b512_230s_recall78_parquet_input_only_layer1.csv) |
-| 5 | Parquet | L2 only | 135s | **68%** | 10.200/15.000 | [↓ CSV](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/test_dataset_v2_15000_L2_eu_pii_safeguard_b512_135s_recall68_parquet_input_only_layer2.csv) |
-| 6 | Parquet | L1+L2 | 365s | **85%** | 12.750/15.000 | [↓ CSV](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/test_dataset_v2_15000_L12_eu_pii_safeguard_b512_365s_recall85_parquet_input.csv) |
-
-**Brondataset (Parquet):** [test_dataset_v2_15000.parquet](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/test_dataset_v2_15000.parquet)
+**Brondataset:** [test_dataset_v2_15000.parquet](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/benchmark_15000/test_dataset_v2_15000.parquet) — 15.000 rijen, 10 thema's, synthetisch gegenereerd
 
 ---
 
-## Screenshots UI-resultaten
+## Runs — CSV input
 
-### Run 3 — CSV input, L1+L2 (85%)
-![CSV input L1+L2 recall 85%](./run_met_15000.png)
+| Lagen | Tijd | Recall | Volledig geanon. | Output |
+|-------|------|--------|-----------------|--------|
+| L1 only | 243s | **78%** | 11.700/15.000 | [↓ CSV](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/benchmark_15000/output/test_dataset_v2_15000_L1_b512_243s_recall78_csv_inputs_only_layer1.csv) |
+| L2 only | 135s | **68%** | 10.200/15.000 | [↓ CSV](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/benchmark_15000/output/test_dataset_v2_15000_L2_eu_pii_safeguard_b512_135s_recall68_csv_input_only_layer2.csv) |
+| L1+L2  | 394s | **85%** | 12.750/15.000 | [↓ CSV](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/benchmark_15000/output/test_dataset_v2_15000_L12_eu_pii_safeguard_b512_394s_recall85.csv) |
 
-### Run 1 — CSV input, L1 only (78%)
-![CSV input L1 only recall 78%](./run_met_15000_csv_input_only_layer1.png)
+### Schermafbeeldingen — CSV
 
-### Run 6 — Parquet input, L1+L2 (85%)
-![Parquet input L1+L2 recall 85%](./run_met_15000_parquet_input.png)
+**L1+L2 (85% recall)**
+![CSV input L1+L2 recall 85%](./benchmark_15000/screenshots/run_met_15000.png)
 
-### Run 5 — Parquet input, L2 only (68%)
-![Parquet input L2 only recall 68%](./run_met_15000_parquet_input_only_layer2.png)
+**L1 only (78% recall)**
+![CSV input L1 only recall 78%](./benchmark_15000/screenshots/run_met_15000_csv_input_only_layer1.png)
+
+---
+
+## Runs — Parquet input
+
+| Lagen | Tijd | Recall | Volledig geanon. | Output |
+|-------|------|--------|-----------------|--------|
+| L1 only | 230s | **78%** | 11.700/15.000 | [↓ CSV](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/benchmark_15000/output/test_dataset_v2_15000_L1_b512_230s_recall78_parquet_input_only_layer1.csv) |
+| L2 only | 135s | **68%** | 10.200/15.000 | [↓ CSV](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/benchmark_15000/output/test_dataset_v2_15000_L2_eu_pii_safeguard_b512_135s_recall68_parquet_input_only_layer2.csv) |
+| L1+L2  | 365s | **85%** | 12.750/15.000 | [↓ CSV](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/benchmark_15000/output/test_dataset_v2_15000_L12_eu_pii_safeguard_b512_365s_recall85_parquet_input.csv) |
+
+### Schermafbeeldingen — Parquet
+
+**L1+L2 (85% recall)**
+![Parquet input L1+L2 recall 85%](./benchmark_15000/screenshots/run_met_15000_parquet_input.png)
+
+**L2 only (68% recall)**
+![Parquet input L2 only recall 68%](./benchmark_15000/screenshots/run_met_15000_parquet_input_only_layer2.png)
 
 ---
 
@@ -67,8 +78,8 @@ CSV en Parquet leveren identieke recall-scores en dezelfde false negatives/posit
 | L1+L2 | 394s | 365s | −29s (−7%) |
 
 **Tijdconsistentie:** Run 4 (L1 + Parquet) is twee keer uitgevoerd met identieke output — beide keren 230s. Beide outputbestanden zijn bewaard:
-- [test_dataset_v2_15000_L1_b512_230s_recall78_parquet_input.csv](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/test_dataset_v2_15000_L1_b512_230s_recall78_parquet_input.csv)
-- [test_dataset_v2_15000_L1_b512_230s_recall78_parquet_input_only_layer1.csv](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/test_dataset_v2_15000_L1_b512_230s_recall78_parquet_input_only_layer1.csv)
+- [test_dataset_v2_15000_L1_b512_230s_recall78_parquet_input.csv](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/benchmark_15000/output/test_dataset_v2_15000_L1_b512_230s_recall78_parquet_input.csv)
+- [test_dataset_v2_15000_L1_b512_230s_recall78_parquet_input_only_layer1.csv](https://github.com/NSE-Team-Fontys/agents/blob/main/decision_logs/evidence/benchmark_15000/output/test_dataset_v2_15000_L1_b512_230s_recall78_parquet_input_only_layer1.csv)
 
 Dezelfde tijd bij twee aparte runs bevestigt dat de meting reproduceerbaar is.
 
@@ -78,7 +89,7 @@ Dezelfde tijd bij twee aparte runs bevestigt dat de meting reproduceerbaar is.
 
 Dit evidence bestand is aangemaakt op basis van de volgende opdracht aan Claude Code (screenshot van de prompt):
 
-![Prompt gebruikt voor aanmaken benchmarkbestand](./used_promt_for_benchmarks_file.png)
+![Prompt gebruikt voor aanmaken benchmarkbestand](./benchmark_15000/screenshots/used_promt_for_benchmarks_file.png)
 
 ---
 
