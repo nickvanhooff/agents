@@ -44,8 +44,8 @@ privacy_officer/
 ├── src/api/app.py          # FastAPI server: /api/anonymize, /api/progress (SSE), /api/download
 ├── src/api/static/         # Single-page Web UI
 ├── src/core/privacy_agent.py   # Core anonymization pipeline
-├── src/core/data_loader.py     # CSV loading
-├── src/core/data_exporter.py   # CSV export
+├── src/core/data_loader.py     # CSV + Parquet loading
+├── src/core/data_exporter.py   # CSV / Parquet / JSONL export
 ├── main.py                 # CLI entry point
 └── scripts/
     ├── ollama_entrypoint.sh    # Docker: starts Ollama + pulls model
@@ -66,17 +66,25 @@ privacy_officer/
 
 ### Web API (`src/api/app.py`)
 
-- `POST /api/anonymize` — accepts multipart form: CSV file + `text_column` + layer checkboxes (1–3) + boolean flags per PII category. Runs anonymization **synchronously**; progress tracked in a global in-memory dict (single-user only).
+- `POST /api/anonymize` — accepts multipart form: CSV or Parquet file + `text_column` + layer checkboxes (1–3) + boolean flags per PII category. Runs anonymization **synchronously**; progress tracked in a global in-memory dict (single-user only).
 - `GET /api/progress` — Server-Sent Events stream polling `progress_state` every 0.5s.
-- `GET /api/download/{filename}` — download the anonymized CSV from `uploads/`.
+- `GET /api/download/{filename}` — download the anonymized file (CSV / Parquet / JSONL) from `uploads/`.
+- `POST /api/detect-columns` — reads headers from an uploaded CSV or Parquet file without loading the full dataset; used by the UI to auto-detect the text column on upload.
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
+| `LLM_BACKEND` | `vllm` | Layer 3 backend: `ollama` or `vllm` |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama service URL |
-| `OLLAMA_MODEL` | `aya-expanse:8b` | LLM model to use |
-| `INPUT_FILE` | `data/input.csv` | CLI: input CSV path |
+| `OLLAMA_MODEL` | `aya-expanse:8b` | Ollama model to use |
+| `OLLAMA_TIMEOUT_SECONDS` | `600` | Timeout for Ollama requests (small GPUs need more) |
+| `VLLM_HOST` | `http://vllm:8000` | vLLM service URL |
+| `VLLM_MODEL` | `Qwen/Qwen2.5-3B-Instruct-AWQ` | vLLM model to use |
+| `PIPELINE_BATCH_SIZE` | `512` | Rows processed per batch |
+| `LAYER2_FP16` | `0` | Set to `1` to run EU-PII-Safeguard in FP16 (faster, needs GPU) |
+| `HF_TOKEN` | — | Optional Hugging Face token for model downloads |
+| `INPUT_FILE` | `data/input.csv` | CLI: input file path (CSV or Parquet) |
 | `OUTPUT_FILE` | `data/output.csv` | CLI: output CSV path |
 | `TEXT_COLUMN` | `feedback_text` | Column to anonymize |
 

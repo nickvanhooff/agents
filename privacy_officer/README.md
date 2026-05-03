@@ -17,15 +17,15 @@ To balance **speed, deterministic accuracy, and contextual understanding**, this
 - **Organization:** Fontys-specific Student Numbers (5–7 digits), usernames (@handles, j_doe88, van_der_meer), and room/building codes (R1, TQ 3.14, lokaal 2.05).
 - **Locations:** Large geographic entities (Cities, Campuses).
 
-### Layer 2: EU-PII-Safeguard (Specialized Transformer)
-**What it is:** A specialized small transformer model (`tabularisai/eu-pii-safeguard`).
+### Layer 2: Transformer PII Model (Specialized Transformer)
+**What it is:** A specialized transformer model — default: `tabularisai/eu-pii-safeguard` (XLM-RoBERTa-large, 42 PII types, 26 EU languages including Dutch). Alternative: `openai/privacy-filter`, selectable via the UI dropdown.
 **What it does:** It acts as a safety net for standard named entities that regex might miss due to complex formatting or spelling variations.
 **It targets:**
 - **Named Entities:** Missed names and location mentions.
 - **Structured PII:** Secondary validation for IDs and contact details.
 
-### Layer 3: Ollama LLM (Contextual Understanding)
-**What it is:** A local Large Language Model (default: `aya-expanse:8b`).
+### Layer 3: Local LLM (Contextual Understanding)
+**What it is:** A local Large Language Model via **Ollama** (default: `aya-expanse:8b`) or **vLLM** (default: `Qwen/Qwen2.5-3B-Instruct-AWQ`). Configured via `LLM_BACKEND` env var.
 **What it does:** It performs a "fine-grained" contextual analysis to identify indirect PII—information that isn't a "name" but can still uniquely identify someone.
 **It targets:**
 - **Honorifics & Titles:** "Meneer de Vries", "Docent Janssen", "Prof. Davis".
@@ -37,11 +37,11 @@ To balance **speed, deterministic accuracy, and contextual understanding**, this
 
 ```mermaid
 graph TD
-    A[User Uploads CSV] --> B{Layer 1: Presidio}
+    A[User Uploads CSV or Parquet] --> B{Layer 1: Presidio}
     B --> C{Layer 2: EU-PII-Safeguard}
     C --> D{Layer 3: Local LLM}
     D -->|Safety Check| E[Anonymized Row]
-    E --> F[User Downloads Safe CSV]
+    E --> F[User Downloads CSV / Parquet / JSONL]
     D -->|Fails| G[Flag for Human Review]
     G --> F
 ```
@@ -58,11 +58,15 @@ This project is fully containerized using Docker. You do not need to install Pyt
 3.  **Memory**: Allocate at least **8GB - 12GB of RAM** to Docker.
 
 ### Configuration (.env)
-We use a central environment file to manage the AI model.
+We use a central environment file to manage the AI model and backend.
 1. Check/create the `.env` file in the root folder.
-2. Set your desired model:
+2. Set your desired backend and model:
    ```env
+   LLM_BACKEND=ollama          # or: vllm
    OLLAMA_MODEL=aya-expanse:8b
+   VLLM_MODEL=Qwen/Qwen2.5-3B-Instruct-AWQ
+   PIPELINE_BATCH_SIZE=512
+   LAYER2_FP16=0               # set to 1 to run EU-PII-Safeguard in FP16 (faster, requires GPU)
    ```
 
 ### Starting the Project
@@ -89,8 +93,8 @@ We use a central environment file to manage the AI model.
 We have built a user-friendly interface to process data without touching code.
 
 1.  **Open the App**: Once Docker is running, go to `http://localhost:8000` in your web browser.
-2.  **Upload**: Drag and drop your `.csv` file. Supports both **UTF-8** and **Latin-1** (Western European) encoding.
-3.  **Specify Column**: Enter the exact name of the column containing the text you want to anonymize.
+2.  **Upload**: Drag and drop your `.csv` or `.parquet` file. CSV supports both **UTF-8** and **Latin-1** (Western European) encoding.
+3.  **Specify Column**: The text column is auto-detected on upload. You can override it manually if needed.
 4.  **Choose Layers**: Use the checkboxes to enable or disable each anonymization layer (Layer 1: Presidio, Layer 2: EU-PII-Safeguard, Layer 3: LLM). All three are checked by default. Uncheck layers to exclude them (e.g. Layer 1 only for fast regex-only anonymization; Layers 1+3 to skip the transformer). If all are unchecked, all layers run.
 5.  **Configure Settings**: 
     - You will see a grid of checkboxes (Names, Locations, Titles, Courses, Physical Details, Student Numbers).

@@ -6,7 +6,7 @@ A collection of AI agents for the Fontys group project.
 
 | Agent | Description |
 |---|---|
-| [`privacy_officer/`](./privacy_officer/README.md) | Fully containerized agent that locally anonymizes open-text feedback using a **triple-layer** pipeline (Presidio + EU-PII-Safeguard + local LLM: `aya-expanse:8b`). Includes a Web UI, real-time progress tracking, and dynamic PII selection. Handles Dutch & English without sending any data to the cloud. |
+| [`privacy_officer/`](./privacy_officer/README.md) | Fully containerized agent that locally anonymizes open-text feedback using a **triple-layer** pipeline (Presidio + EU-PII-Safeguard + local LLM). Accepts CSV and Parquet input; exports CSV, Parquet, and JSONL. Includes a Web UI, real-time progress tracking, and dynamic PII selection. Supports Ollama and vLLM backends. Handles Dutch & English without sending any data to the cloud. |
 
 ## Getting Started
 
